@@ -15,6 +15,7 @@
 | 层 | 技术 |
 |----|------|
 | 后端框架 | FastAPI + Uvicorn |
+| 关系数据库 | MySQL 8.0 |
 | 向量数据库 | Chroma (HNSW) |
 | 向量模型 | Qwen text-embedding-v3 (1024d) |
 | LLM | Qwen-Plus (OpenAI 兼容) |
@@ -34,7 +35,13 @@ cd agentic-rag-kb
 
 # 配置环境变量
 cp .env.example .env
-# 编辑 .env，填入你的 LLM_API_KEY 和 EMBEDDING_API_KEY
+# 编辑 .env，填入 LLM_API_KEY、MYSQL_PASSWORD 等
+
+# 启动 MySQL（Docker 方式）
+docker run -d --name mysql-rag \
+  -e MYSQL_ROOT_PASSWORD=your_password \
+  -e MYSQL_DATABASE=agentic_rag \
+  -p 3306:3306 mysql:8.0
 ```
 
 ### 2. 后端启动
@@ -73,7 +80,7 @@ agentic-rag-kb/
 │   │   ├── config.py            # pydantic-settings 配置
 │   │   ├── api/                 # API 路由
 │   │   ├── core/                # Agent / Retriever / Parser / Chunker / Embedder
-│   │   ├── db/                  # Chroma + SQLite 封装
+│   │   ├── db/                  # Chroma + MySQL 封装
 │   │   ├── models/              # Pydantic 模型
 │   │   └── utils/               # 日志 / Token 计数
 │   ├── data/                    # 持久化数据

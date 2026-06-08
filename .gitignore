@@ -42,6 +42,9 @@ backend/data/app.db
 *.log
 logs/
 
+# ===== Design Doc (local only) =====
+DESIGN.md
+
 # ===== Docker =====
 # (keep Dockerfiles and docker-compose.yml)
 
