@@ -10,10 +10,19 @@ import sys
 from contextlib import asynccontextmanager
 from typing import AsyncGenerator
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.config import settings
+from app.models.response import (
+    AppException,
+    app_exception_handler,
+    global_exception_handler,
+    http_exception_handler,
+    validation_exception_handler,
+)
 
 # Ensure emoji-safe output on Windows terminals that default to GBK.
 if sys.stdout.encoding.lower() != "utf-8":
@@ -59,3 +68,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# ── Exception handlers ────────────────────────────────────────────────
+app.add_exception_handler(StarletteHTTPException, http_exception_handler)
+app.add_exception_handler(AppException, app_exception_handler)
+app.add_exception_handler(RequestValidationError, validation_exception_handler)
+app.add_exception_handler(Exception, global_exception_handler)
