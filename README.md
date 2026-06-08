@@ -91,14 +91,3 @@ agentic-rag-kb/
 ├── DESIGN.md                    # 完整技术方案
 └── README.md
 ```
-
-## 开发路线
-
-| Phase | 目标 | 估时 |
-|-------|------|------|
-| Phase 1 | MVP 核心链路（上传 → 检索 → 流式答案） | ~10d |
-| Phase 2 | Agent 增强（Rewrite + Multi-Search + Rerank + Quality Check） | ~7d |
-| Phase 3 | 引用与打磨（Citation + Source Highlight + Docker） | ~5d |
-| Phase 4 | 可选增强（多轮对话、语义切分、本地模型） | — |
-
-详见 [DESIGN.md](./DESIGN.md)
