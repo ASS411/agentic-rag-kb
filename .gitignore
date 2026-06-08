@@ -1,0 +1,50 @@
+# ===== Python =====
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+*.egg
+.venv/
+venv/
+env/
+
+# ===== Node =====
+node_modules/
+dist/
+.next/
+*.tsbuildinfo
+
+# ===== Environment =====
+.env
+.env.local
+.env.*.local
+
+# ===== IDE =====
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# ===== Data =====
+backend/data/chroma_data/
+backend/data/uploads/*
+!backend/data/uploads/.gitkeep
+backend/data/cache/*
+!backend/data/cache/.gitkeep
+backend/data/app.db
+
+# ===== Logs =====
+*.log
+logs/
+
+# ===== Docker =====
+# (keep Dockerfiles and docker-compose.yml)
+
+# ===== OS =====
+.DS_Store
+Thumbs.db
