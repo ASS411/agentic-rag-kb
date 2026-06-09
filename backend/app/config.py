@@ -195,6 +195,7 @@ class ServerSettings(BaseSettings):
 
     host: str = Field(default="0.0.0.0")
     port: int = Field(default=8000)
+    version: str = Field(default="0.1.0")
     cors_origins: Any = Field(
         default="http://localhost:5173",
         description="Comma-separated allowed origins (stored as list after validation)",

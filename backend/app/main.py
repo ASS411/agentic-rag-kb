@@ -15,6 +15,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from loguru import logger
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
+from app.api.health import router as health_router
 from app.config import settings
 from app.db.mysql import dispose_engine
 from app.models.response import (
@@ -84,3 +85,6 @@ app.add_exception_handler(StarletteHTTPException, http_exception_handler)
 app.add_exception_handler(AppException, app_exception_handler)
 app.add_exception_handler(RequestValidationError, validation_exception_handler)
 app.add_exception_handler(Exception, global_exception_handler)
+
+# ── API routers ───────────────────────────────────────────────────────
+app.include_router(health_router, prefix="/api/v1")
