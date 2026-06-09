@@ -16,6 +16,7 @@ from loguru import logger
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.config import settings
+from app.db.mysql import dispose_engine
 from app.models.response import (
     AppException,
     app_exception_handler,
@@ -50,10 +51,12 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     logger.info("   LLM: {}/{}", settings.llm.provider, settings.llm.model)
     logger.info("   Embedding: {}/{}", settings.embedding.provider, settings.embedding.model)
     logger.info("   CORS: {}", settings.server.cors_origins)
+    logger.info("   MySQL: {}:{}/{}", settings.mysql.host, settings.mysql.port, settings.mysql.database)
 
     yield  # Application runs here
 
     # ── Shutdown ─────────────────────────────────────────────────────
+    await dispose_engine()
     logger.info("\U0001f6d1 服务已关闭")
 
 
