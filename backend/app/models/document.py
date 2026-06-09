@@ -77,6 +77,66 @@ def _get_ext(filename: str) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Internal domain models (used by parsers, chunker, pipeline)
+# ---------------------------------------------------------------------------
+
+
+class Page:
+    """A single page extracted from a parsed document."""
+
+    def __init__(
+        self,
+        page_number: int,
+        text: str,
+        metadata: dict | None = None,
+    ) -> None:
+        self.page_number = page_number
+        self.text = text
+        self.metadata = metadata or {}
+
+    def __repr__(self) -> str:
+        return f"Page({self.page_number}, {len(self.text)} chars)"
+
+
+class Document:
+    """Parsed document produced by a parser and consumed by the chunker / pipeline.
+
+    Holds the original file metadata and the extracted text organised by page.
+    """
+
+    def __init__(
+        self,
+        file_name: str,
+        doc_type: DocType,
+        pages: list[Page],
+        metadata: dict | None = None,
+    ) -> None:
+        self.file_name = file_name
+        self.doc_type = doc_type
+        self.pages = pages
+        self.metadata = metadata or {}
+
+    @property
+    def page_count(self) -> int:
+        return len(self.pages)
+
+    @property
+    def full_text(self) -> str:
+        """Concatenated text of all pages, separated by double newlines."""
+        return "\n\n".join(p.text for p in self.pages)
+
+    @property
+    def char_count(self) -> int:
+        return sum(len(p.text) for p in self.pages)
+
+    def __repr__(self) -> str:
+        return (
+            f"Document({self.file_name!r}, type={self.doc_type.value}, "
+            f"pages={self.page_count}, chars={self.char_count})"
+        )
+
+
+# ---------------------------------------------------------------------------
 # API response models
 # ---------------------------------------------------------------------------
 
