@@ -16,7 +16,7 @@ CREATE TABLE IF NOT EXISTS documents (
     page_count INT DEFAULT 1,
     chunk_count INT DEFAULT 0,
     size_bytes BIGINT,
-    status VARCHAR(16) DEFAULT 'ready',  -- processing, ready, error
+    status VARCHAR(16) DEFAULT 'processing',  -- processing, ready, error
     error_message TEXT,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP

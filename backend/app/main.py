@@ -27,6 +27,7 @@ from app.models.response import (
     validation_exception_handler,
 )
 from app.utils.logging import RequestIDMiddleware, setup_logging
+from db.migrate import init_db
 
 
 @asynccontextmanager
@@ -54,6 +55,10 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     logger.info("   Embedding: {}/{}", settings.embedding.provider, settings.embedding.model)
     logger.info("   CORS: {}", settings.server.cors_origins)
     logger.info("   MySQL: {}:{}/{}", settings.mysql.host, settings.mysql.port, settings.mysql.database)
+
+    # ── Ensure database tables exist ─────────────────────────────────
+    await init_db()
+    logger.info("   Database tables verified")
 
     yield  # Application runs here
 

@@ -13,7 +13,26 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.config import settings
+from app.db.mysql import get_db
 from app.main import app
+
+# ── Override get_db with a mock to avoid real MySQL dependency ──────────
+from unittest.mock import AsyncMock, MagicMock
+
+_mock_session = MagicMock()
+_mock_session.add = MagicMock()
+_mock_session.commit = AsyncMock()
+_mock_session.refresh = AsyncMock(side_effect=lambda obj: None)
+_mock_session.execute = AsyncMock()
+_mock_session.delete = AsyncMock()
+
+# For list: return empty results
+_mock_result = MagicMock()
+_mock_result.scalar.return_value = 0
+_mock_result.scalars.return_value.all.return_value = []
+_mock_session.execute.return_value = _mock_result
+
+app.dependency_overrides[get_db] = lambda: _mock_session
 
 client = TestClient(app)
 
