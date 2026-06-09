@@ -163,3 +163,41 @@ class DocumentListResponse(BaseModel):
     total: int = Field(..., ge=0)
     page: int = Field(..., ge=1)
     size: int = Field(..., ge=1)
+
+
+# ---------------------------------------------------------------------------
+# SQLAlchemy ORM model (maps to MySQL ``documents`` table)
+# ---------------------------------------------------------------------------
+
+
+from sqlalchemy import BigInteger, Column, DateTime, Integer, String, Text, func
+
+from app.db.mysql import Base
+
+
+class DocumentModel(Base):
+    """SQLAlchemy ORM model for the ``documents`` table.
+
+    Maps 1:1 to the MySQL schema in ``db/init.sql``.
+    Use this model for all DB operations (insert, query, update, delete).
+    """
+
+    __tablename__ = "documents"
+
+    doc_id = Column(String(64), primary_key=True, comment="UUID hex (32 chars)")
+    file_name = Column(String(512), nullable=False, comment="Original filename")
+    doc_type = Column(String(16), nullable=False, comment="pdf / md / txt")
+    file_path = Column(String(1024), nullable=False, comment="Local storage path")
+    page_count = Column(Integer, default=1, comment="Number of pages")
+    chunk_count = Column(Integer, default=0, comment="Number of chunks")
+    size_bytes = Column(BigInteger, nullable=True, comment="File size in bytes")
+    status = Column(String(16), default="processing", comment="processing / ready / error")
+    error_message = Column(Text, nullable=True, comment="Error detail when status=error")
+    created_at = Column(DateTime, server_default=func.now())
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+
+    def __repr__(self) -> str:
+        return (
+            f"<DocumentModel(doc_id={self.doc_id!r}, "
+            f"file={self.file_name!r}, type={self.doc_type})>"
+        )
