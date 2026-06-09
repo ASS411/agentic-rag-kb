@@ -1,18 +1,18 @@
 """FastAPI application entry point.
 
-Creates the app instance, configures CORS middleware, and manages
-startup / shutdown lifecycle events.
+Creates the app instance, configures CORS middleware, request-ID
+middleware, exception handlers, and manage startup / shutdown lifecycle.
 """
 
 from __future__ import annotations
 
-import sys
 from contextlib import asynccontextmanager
 from typing import AsyncGenerator
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
+from loguru import logger
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.config import settings
@@ -23,10 +23,7 @@ from app.models.response import (
     http_exception_handler,
     validation_exception_handler,
 )
-
-# Ensure emoji-safe output on Windows terminals that default to GBK.
-if sys.stdout.encoding.lower() != "utf-8":
-    sys.stdout.reconfigure(encoding="utf-8")
+from app.utils.logging import RequestIDMiddleware, setup_logging
 
 
 @asynccontextmanager
@@ -34,6 +31,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """Handle startup and shutdown events.
 
     Startup:
+        - Initialise loguru
         - Log server info
         - (Future) Initialise DB connection pool, Chroma client, etc.
 
@@ -42,15 +40,21 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         - (Future) Close DB pool, Chroma client, etc.
     """
     # ── Startup ──────────────────────────────────────────────────────
-    print(f"\U0001f680 {settings.server.host}:{settings.server.port} 启动中...")
-    print(f"   LLM: {settings.llm.provider}/{settings.llm.model}")
-    print(f"   Embedding: {settings.embedding.provider}/{settings.embedding.model}")
-    print(f"   CORS: {settings.server.cors_origins}")
+    setup_logging(level=settings.server.log_level)
+
+    logger.info(
+        "\U0001f680 {host}:{port} 启动中...",
+        host=settings.server.host,
+        port=settings.server.port,
+    )
+    logger.info("   LLM: {}/{}", settings.llm.provider, settings.llm.model)
+    logger.info("   Embedding: {}/{}", settings.embedding.provider, settings.embedding.model)
+    logger.info("   CORS: {}", settings.server.cors_origins)
 
     yield  # Application runs here
 
     # ── Shutdown ─────────────────────────────────────────────────────
-    print("\U0001f6d1 服务已关闭")
+    logger.info("\U0001f6d1 服务已关闭")
 
 
 app = FastAPI(
@@ -59,6 +63,9 @@ app = FastAPI(
     version="0.1.0",
     lifespan=lifespan,
 )
+
+# ── Request-ID middleware (first, so every request gets an ID) ─────────
+app.add_middleware(RequestIDMiddleware)
 
 # ── CORS middleware ───────────────────────────────────────────────────
 app.add_middleware(
