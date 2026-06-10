@@ -3,6 +3,9 @@
 ``POST /api/v1/documents/upload`` — multipart file upload → file + MySQL.
 ``GET  /api/v1/documents`` — paginated document list from MySQL.
 ``DELETE /api/v1/documents/{doc_id}`` — delete from MySQL + file system.
+
+After upload, a background task runs the ingestion pipeline:
+parse → chunk → embed → write to Chroma.
 """
 
 from __future__ import annotations
@@ -11,14 +14,16 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Query, UploadFile
 from loguru import logger
-from sqlalchemy import select, func
+from sqlalchemy import select, func, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
+from app.core.pipeline import IngestionPipeline
 from app.core.storage import get_storage
-from app.db.mysql import get_db
+from app.db.chroma import ChromaStore
+from app.db.mysql import get_db, async_session_factory
 from app.models.document import (
     DocType,
     DocumentListResponse,
@@ -92,6 +97,74 @@ def _orm_to_response(orm: DocumentModel) -> DocumentResponse:
 
 
 # ---------------------------------------------------------------------------
+# Background ingestion
+# ---------------------------------------------------------------------------
+
+
+async def _run_ingestion(doc_id: str, file_path: str) -> None:
+    """Background task: run the pipeline and update the MySQL record.
+
+    Creates its own DB session and Chroma store so it does not depend on
+    the request-scoped resources.  All errors are caught and logged —
+    the background task must never crash the server.
+    """
+    logger.info("Background ingestion started: doc_id={}", doc_id)
+
+    pipeline = IngestionPipeline()
+
+    try:
+        result = await pipeline.run(file_path, doc_id=doc_id)
+    except Exception:
+        logger.exception("Background ingestion failed: doc_id={}", doc_id)
+        await _try_update_status(doc_id, status="error",
+                                 error_message="Pipeline execution failed")
+        return
+
+    await _try_update_status(
+        doc_id,
+        status="ready",
+        page_count=result.doc.page_count,
+        chunk_count=result.chunk_count,
+    )
+
+    logger.info(
+        "Background ingestion complete: doc_id={}, chunks={}, status=ready",
+        doc_id,
+        result.chunk_count,
+    )
+
+
+async def _try_update_status(
+    doc_id: str,
+    status: str,
+    page_count: int | None = None,
+    chunk_count: int | None = None,
+    error_message: str | None = None,
+) -> None:
+    """Attempt to update the document status in MySQL; silently ignore DB errors."""
+    values: dict[str, object] = {"status": status, "error_message": error_message}
+    if page_count is not None:
+        values["page_count"] = page_count
+    if chunk_count is not None:
+        values["chunk_count"] = chunk_count
+
+    try:
+        async with async_session_factory() as session:
+            await session.execute(
+                update(DocumentModel)
+                .where(DocumentModel.doc_id == doc_id)
+                .values(**values)
+            )
+            await session.commit()
+    except Exception:
+        logger.warning(
+            "Failed to update document status in MySQL: doc_id={}, status={}",
+            doc_id,
+            status,
+        )
+
+
+# ---------------------------------------------------------------------------
 # Routes
 # ---------------------------------------------------------------------------
 
@@ -102,12 +175,17 @@ async def upload_document(
         ...,
         description="Document file (PDF, Markdown, or TXT). Max 50 MB.",
     ),
+    background_tasks: BackgroundTasks = BackgroundTasks(),
     db: AsyncSession = Depends(get_db),
 ) -> APIResponse[DocumentResponse]:
     """Upload a document file.
 
     Validates type & size, persists the file via ``FileStorage`` and
     inserts a record into the MySQL ``documents`` table.
+
+    A background task is scheduled to run the ingestion pipeline
+    (parse → chunk → embed → write to Chroma).  The response returns
+    immediately with ``status="processing"``.
     """
     content, filename, size = await _read_and_validate(file)
     doc_type = detect_doc_type(file.content_type, filename)
@@ -134,6 +212,9 @@ async def upload_document(
     db.add(record)
     await db.commit()
     await db.refresh(record)
+
+    # ── Schedule background ingestion ────────────────────────────────
+    background_tasks.add_task(_run_ingestion, doc_id, str(file_path))
 
     logger.info(
         "Document uploaded: doc_id={}, file={}, type={}, size={}",
