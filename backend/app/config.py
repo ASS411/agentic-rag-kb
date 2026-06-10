@@ -94,9 +94,30 @@ class EmbeddingSettings(BaseSettings):
         default="text-embedding-v3",
         description="Embedding model name",
     )
+    base_url: AnyHttpUrl = Field(
+        default=AnyHttpUrl("https://dashscope.aliyuncs.com/compatible-mode/v1"),
+        description="Embedding endpoint base URL (OpenAI-compatible)",
+    )
     dimensions: int = Field(
         default=1024,
         description="Output embedding dimensions",
+    )
+    batch_size: int = Field(
+        default=25,
+        ge=1,
+        le=100,
+        description="Max texts per batch API call",
+    )
+    max_retries: int = Field(
+        default=3,
+        ge=0,
+        le=10,
+        description="Max retries on transient failures",
+    )
+    timeout_seconds: int = Field(
+        default=60,
+        ge=5,
+        description="HTTP request timeout in seconds",
     )
 
     model_config = SettingsConfigDict(env_prefix="EMBEDDING_", extra="ignore")
