@@ -17,6 +17,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.api.documents import router as documents_router
 from app.api.health import router as health_router
+from app.api.search import router as search_router
 from app.config import settings
 from app.db.mysql import dispose_engine
 from app.models.response import (
@@ -95,3 +96,4 @@ app.add_exception_handler(Exception, global_exception_handler)
 # ── API routers ───────────────────────────────────────────────────────
 app.include_router(health_router, prefix="/api/v1")
 app.include_router(documents_router, prefix="/api/v1")
+app.include_router(search_router, prefix="/api/v1")
