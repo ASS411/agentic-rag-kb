@@ -263,7 +263,7 @@ async def delete_document(
     doc_id: str,
     db: AsyncSession = Depends(get_db),
 ) -> APIResponse[str]:
-    """Delete a document — removes MySQL record + uploaded file directory."""
+    """Delete a document — removes MySQL record + uploaded files + Chroma vectors."""
     # ── Delete from MySQL ────────────────────────────────────────────
     result = await db.execute(
         select(DocumentModel).where(DocumentModel.doc_id == doc_id)
@@ -275,9 +275,17 @@ async def delete_document(
     await db.delete(record)
     await db.commit()
 
+    # ── Delete from Chroma ───────────────────────────────────────────
+    chroma = ChromaStore()
+    deleted_chunks = chroma.delete_by_doc_id(doc_id)
+
     # ── Delete uploaded files ────────────────────────────────────────
     storage = get_storage()
     storage.delete(doc_id)
 
-    logger.info("Document deleted: doc_id={}", doc_id)
+    logger.info(
+        "Document deleted: doc_id={}, chroma_chunks_removed={}",
+        doc_id,
+        deleted_chunks,
+    )
     return APIResponse.ok(data=doc_id, message="Document deleted")
