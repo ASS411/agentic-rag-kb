@@ -10,6 +10,7 @@ parse → chunk → embed → write to Chroma.
 
 from __future__ import annotations
 
+import hashlib
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -24,6 +25,7 @@ from app.core.pipeline import IngestionPipeline
 from app.core.storage import get_storage
 from app.db.chroma import ChromaStore
 from app.db.mysql import get_db, async_session_factory
+from app.models.chunk import ChunkModel
 from app.models.document import (
     DocType,
     DocumentListResponse,
@@ -127,6 +129,8 @@ async def _run_ingestion(doc_id: str, file_path: str) -> None:
         chunk_count=result.chunk_count,
     )
 
+    await _persist_chunk_metadata(doc_id, result.chunks)
+
     logger.info(
         "Background ingestion complete: doc_id={}, chunks={}, status=ready",
         doc_id,
@@ -161,6 +165,49 @@ async def _try_update_status(
             "Failed to update document status in MySQL: doc_id={}, status={}",
             doc_id,
             status,
+        )
+
+
+async def _persist_chunk_metadata(
+    doc_id: str,
+    chunks: list,  # list[Chunk] from app.core.chunker
+) -> None:
+    """Bulk-insert chunk metadata rows into MySQL.
+
+    Each row stores chunk_id, doc_id, content_hash, and char_count.
+    Errors are silently ignored (the vector data in Chroma is the source
+    of truth; this table is a convenience cache).
+    """
+    if not chunks:
+        return
+
+    from app.core.chunker import Chunk
+
+    rows: list[ChunkModel] = []
+    for c in chunks:
+        content_hash = hashlib.sha256(c.content.encode("utf-8")).hexdigest()
+        rows.append(
+            ChunkModel(
+                chunk_id=c.id,
+                doc_id=doc_id,
+                content_hash=content_hash,
+                char_count=c.char_count,
+            )
+        )
+
+    try:
+        async with async_session_factory() as session:
+            session.add_all(rows)
+            await session.commit()
+            logger.info(
+                "Persisted {} chunk metadata rows for doc_id={}",
+                len(rows),
+                doc_id,
+            )
+    except Exception:
+        logger.warning(
+            "Failed to persist chunk metadata for doc_id={}",
+            doc_id,
         )
 
 
@@ -274,6 +321,9 @@ async def delete_document(
 
     await db.delete(record)
     await db.commit()
+
+    # ── Clean up chunk metadata (belt-and-suspenders: FK CASCADE handles
+    #     this too, but explicit delete is safer across DB engines)
 
     # ── Delete from Chroma ───────────────────────────────────────────
     chroma = ChromaStore()

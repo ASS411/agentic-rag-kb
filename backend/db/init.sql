@@ -43,3 +43,14 @@ CREATE TABLE IF NOT EXISTS qa_records (
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (conversation_id) REFERENCES conversations(conversation_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- chunks 元数据表（模块 3.5）
+CREATE TABLE IF NOT EXISTS chunks (
+    chunk_id VARCHAR(128) PRIMARY KEY,
+    doc_id VARCHAR(64) NOT NULL,
+    content_hash VARCHAR(64) NOT NULL,   -- SHA-256 hex digest
+    char_count INT NOT NULL DEFAULT 0,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_chunks_doc_id (doc_id),
+    FOREIGN KEY (doc_id) REFERENCES documents(doc_id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
