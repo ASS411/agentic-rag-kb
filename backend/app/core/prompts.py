@@ -313,3 +313,100 @@ class RAGPromptBuilder:
     def answer_template(self) -> str:
         """Return the active answer template."""
         return self._answer_template
+
+
+# ---------------------------------------------------------------------------
+# Agent prompt templates (Phase 2 — module 3.3)
+# ---------------------------------------------------------------------------
+
+_REWRITE_SYSTEM_PROMPT = (
+    "你是一个专业的检索查询改写助手。"
+    "你的任务是将用户的原始问题改写为 3-5 条不同角度的检索查询，"
+    "以便从知识库中全面召回相关信息。"
+    "\n\n"
+    "要求：\n"
+    "1. 每条查询应从不同角度或使用不同关键词来表述\n"
+    "2. 包含原问题的核心语义，但避免简单重复\n"
+    "3. 考虑可能的同义词、缩写、中英文对照等变化\n"
+    "4. 查询应为自然语言短语或问句，不要过长\n"
+    "5. 必须严格输出 JSON 数组格式"
+)
+
+_REWRITE_USER_TEMPLATE = """用户原始问题：
+{question}
+
+请为上述问题生成 3-5 条不同角度的检索查询，以 JSON 字符串数组格式输出：
+```json
+["查询1", "查询2", "查询3"]
+```
+
+只输出 JSON 数组，不要包含其他文字。"""
+
+_REPLAN_SYSTEM_PROMPT = (
+    "你是一个专业的检索策略补充助手。"
+    "当已有检索结果不足以回答用户问题时，"
+    "你需要分析缺失的信息并生成 2-3 条针对性的补充检索查询。"
+    "\n\n"
+    "要求：\n"
+    "1. 每条查询针对已知的信息缺口\n"
+    "2. 用不同的关键词或角度来覆盖缺失内容\n"
+    "3. 查询应简洁、精准、可直接用于向量检索\n"
+    "4. 必须严格输出 JSON 数组格式"
+)
+
+_REPLAN_USER_TEMPLATE = """用户原始问题：
+{question}
+
+当前检索覆盖的缺口（缺失或不充分的信息）：
+{gap_description}
+
+请为补充上述缺口生成 2-3 条检索查询，以 JSON 字符串数组格式输出：
+```json
+["补充查询1", "补充查询2"]
+```
+
+只输出 JSON 数组，不要包含其他文字。"""
+
+
+def build_rewrite_messages(question: str) -> list[dict[str, str]]:
+    """Build messages for the query-rewrite LLM call.
+
+    Parameters
+    ----------
+    question:
+        The user's original natural-language question.
+
+    Returns
+    -------
+    list[dict[str, str]]
+        Messages list ready for ``LLMClient.generate()``.
+    """
+    return [
+        {"role": "system", "content": _REWRITE_SYSTEM_PROMPT},
+        {"role": "user", "content": _REWRITE_USER_TEMPLATE.format(question=question)},
+    ]
+
+
+def build_replan_messages(question: str, gap_description: str) -> list[dict[str, str]]:
+    """Build messages for the replan (gap-filling) LLM call.
+
+    Parameters
+    ----------
+    question:
+        The user's original natural-language question.
+    gap_description:
+        Human-readable description of what information is missing or
+        insufficient in the current context pool.
+
+    Returns
+    -------
+    list[dict[str, str]]
+        Messages list ready for ``LLMClient.generate()``.
+    """
+    return [
+        {"role": "system", "content": _REPLAN_SYSTEM_PROMPT},
+        {"role": "user", "content": _REPLAN_USER_TEMPLATE.format(
+            question=question,
+            gap_description=gap_description,
+        )},
+    ]
