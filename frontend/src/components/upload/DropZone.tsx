@@ -9,6 +9,7 @@ export type DropZoneProps = {
 
 export function DropZone({ upload, onFiles }: DropZoneProps) {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const busy = upload.phase === 'uploading' || upload.phase === 'processing';
 
   const handleDragOver = (event: DragEvent) => {
     event.preventDefault();
@@ -41,9 +42,9 @@ export function DropZone({ upload, onFiles }: DropZoneProps) {
         className="upload-target"
         type="button"
         onClick={() => fileInputRef.current?.click()}
-        disabled={upload.phase === 'uploading'}
+        disabled={busy}
       >
-        {upload.phase === 'uploading' ? (
+        {busy ? (
           <Loader2 className="spin" size={22} aria-hidden="true" />
         ) : (
           <UploadCloud size={24} aria-hidden="true" />

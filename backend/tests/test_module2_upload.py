@@ -106,6 +106,8 @@ class TestUploadSuccess:
         assert len(data["doc_id"]) == 32  # UUID hex
         assert data["page_count"] == 0  # not yet parsed
         assert data["chunk_count"] == 0  # not yet chunked
+        assert data["status"] == "processing"
+        assert data["error_message"] is None
 
     def test_upload_markdown_mime(self, override_upload_dir):
         """Upload via 'text/markdown' MIME type."""

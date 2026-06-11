@@ -94,6 +94,8 @@ def _orm_to_response(orm: DocumentModel) -> DocumentResponse:
         size_bytes=orm.size_bytes or 0,
         page_count=orm.page_count or 0,
         chunk_count=orm.chunk_count or 0,
+        status=orm.status or "processing",
+        error_message=orm.error_message,
         uploaded_at=orm.created_at or datetime.now(timezone.utc).replace(tzinfo=None),
     )
 

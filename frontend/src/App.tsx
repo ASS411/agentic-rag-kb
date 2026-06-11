@@ -22,6 +22,17 @@ const EXAMPLES = [
   '把相关段落整理成一个三点行动清单。',
 ];
 
+const PROCESSING_POLL_INTERVAL_MS = 1500;
+const PROCESSING_POLL_MAX_ATTEMPTS = 24;
+
+function wait(ms: number) {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
+function isDocumentReady(doc: DocumentItem) {
+  return doc.status === 'ready' || doc.chunk_count > 0;
+}
+
 export default function App() {
   const [documents, setDocuments] = useState<DocumentItem[]>([]);
   const [docLoading, setDocLoading] = useState(true);
@@ -44,7 +55,7 @@ export default function App() {
   const bottomRef = useRef<HTMLDivElement | null>(null);
 
   const readyDocs = useMemo(
-    () => documents.filter((doc) => doc.chunk_count > 0).length,
+    () => documents.filter(isDocumentReady).length,
     [documents],
   );
 
@@ -54,12 +65,31 @@ export default function App() {
     try {
       const result = await fetchDocuments();
       setDocuments(result.items);
+      return result.items;
     } catch (error) {
       setDocError(error instanceof Error ? error.message : '文档列表加载失败');
+      return [];
     } finally {
       setDocLoading(false);
     }
   }, []);
+
+  const waitForDocumentProcessing = useCallback(
+    async (docId: string) => {
+      for (let attempt = 0; attempt < PROCESSING_POLL_MAX_ATTEMPTS; attempt += 1) {
+        await wait(PROCESSING_POLL_INTERVAL_MS);
+        const latest = await refreshDocuments();
+        const uploadedDoc = latest.find((doc) => doc.doc_id === docId);
+
+        if (!uploadedDoc) continue;
+        if (uploadedDoc.status === 'error') return uploadedDoc;
+        if (isDocumentReady(uploadedDoc)) return uploadedDoc;
+      }
+
+      return null;
+    },
+    [refreshDocuments],
+  );
 
   useEffect(() => {
     void refreshDocuments();
@@ -76,11 +106,36 @@ export default function App() {
           setUpload({ phase: 'uploading', progress, message: `正在上传 ${file.name}` });
         });
         setUpload({
-          phase: 'success',
-          progress: 100,
-          message: `${uploaded.file_name} 已进入解析队列`,
+          phase: 'processing',
+          progress: 92,
+          message: `${uploaded.file_name} 正在解析并写入索引`,
         });
         await refreshDocuments();
+        const processed = await waitForDocumentProcessing(uploaded.doc_id);
+
+        if (processed?.status === 'error') {
+          setUpload({
+            phase: 'error',
+            progress: 0,
+            message: processed.error_message || `${processed.file_name} 解析失败`,
+          });
+          return;
+        }
+
+        if (processed) {
+          setUpload({
+            phase: 'success',
+            progress: 100,
+            message: `${processed.file_name} 已就绪，生成 ${processed.chunk_count} 个片段`,
+          });
+          return;
+        }
+
+        setUpload({
+          phase: 'processing',
+          progress: 96,
+          message: `${uploaded.file_name} 仍在后台处理中，可稍后刷新文档列表`,
+        });
       } catch (error) {
         setUpload({
           phase: 'error',
@@ -89,7 +144,7 @@ export default function App() {
         });
       }
     },
-    [refreshDocuments],
+    [refreshDocuments, waitForDocumentProcessing],
   );
 
   const chat = useChatStream({
@@ -184,7 +239,7 @@ export default function App() {
 
           <QuestionInput
             streaming={chat.streaming}
-            hasDocuments={documents.length > 0}
+            hasDocuments={readyDocs > 0}
             onSubmit={handleQuestion}
             onStop={chat.stop}
           />

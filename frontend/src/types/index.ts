@@ -7,6 +7,8 @@ export type ApiEnvelope<T> = {
 
 export type DocType = 'pdf' | 'md' | 'txt';
 
+export type DocumentStatus = 'processing' | 'ready' | 'error' | (string & {});
+
 export type DocumentItem = {
   doc_id: string;
   file_name: string;
@@ -14,6 +16,8 @@ export type DocumentItem = {
   size_bytes: number;
   page_count: number;
   chunk_count: number;
+  status?: DocumentStatus;
+  error_message?: string | null;
   uploaded_at: string;
 };
 
@@ -138,7 +142,7 @@ export type ChatResponse = {
   conversation_id: string | null;
 };
 
-export type UploadPhase = 'idle' | 'uploading' | 'success' | 'error';
+export type UploadPhase = 'idle' | 'uploading' | 'processing' | 'success' | 'error';
 
 export type UploadState = {
   phase: UploadPhase;

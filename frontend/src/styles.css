@@ -148,6 +148,10 @@ h1 {
   border-color: rgba(119, 200, 150, 0.34);
 }
 
+.upload-pad.processing {
+  border-color: rgba(142, 199, 255, 0.34);
+}
+
 .upload-pad.error {
   border-color: rgba(255, 134, 112, 0.42);
 }
@@ -263,6 +267,50 @@ h1 {
 .thinking-collapsed-copy {
   color: #93a6b8;
   font-size: 12px;
+}
+
+.doc-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 5px;
+}
+
+.doc-meta > span {
+  display: inline-flex;
+  min-height: 22px;
+  align-items: center;
+  gap: 5px;
+}
+
+.doc-status {
+  padding: 0 7px;
+  border: 1px solid rgba(232, 237, 242, 0.08);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.03);
+  font-weight: 720;
+}
+
+.doc-status.ready {
+  border-color: rgba(127, 228, 198, 0.2);
+  color: #92ebca;
+}
+
+.doc-status.processing {
+  border-color: rgba(142, 199, 255, 0.22);
+  color: #8ec7ff;
+}
+
+.doc-status.error {
+  border-color: rgba(255, 134, 112, 0.28);
+  color: #ffe1d9;
+}
+
+.doc-error {
+  display: block;
+  margin-top: 6px;
+  color: #ffb5a8;
+  overflow-wrap: anywhere;
 }
 
 .quiet-state,

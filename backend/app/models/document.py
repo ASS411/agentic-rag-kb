@@ -150,6 +150,14 @@ class DocumentResponse(BaseModel):
     size_bytes: int = Field(..., ge=0, description="File size in bytes")
     page_count: int = Field(default=0, ge=0, description="Number of pages (PDF only)")
     chunk_count: int = Field(default=0, ge=0, description="Number of chunks after splitting")
+    status: str = Field(
+        default="processing",
+        description="Processing status: processing / ready / error",
+    )
+    error_message: str | None = Field(
+        default=None,
+        description="Error detail when status=error",
+    )
     uploaded_at: datetime = Field(
         default_factory=datetime.utcnow,
         description="Upload timestamp (UTC)",
