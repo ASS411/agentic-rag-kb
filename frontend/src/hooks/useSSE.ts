@@ -1,5 +1,5 @@
 import { useCallback, useRef, useState } from 'react';
-import type { ChatMessage, ThinkingStep } from '../types';
+import type { ChatMessage, SearchChunk, ThinkingStep } from '../types';
 import { createChatStream } from '../api/chat';
 
 export type SSEState = {
@@ -17,7 +17,7 @@ export type UseChatStreamOptions = {
   /** Called for every token event. */
   onToken: (assistantId: string, token: string) => void;
   /** Called when sources event is received. */
-  onSources: (sourcesText: string) => void;
+  onSources: (sourcesText: string, sourceChunks: SearchChunk[]) => void;
   /** Called when an error occurs (before the error is recorded in state). */
   onError?: (assistantId: string, message: string) => void;
   /** Called when the stream finishes (success or failure). */
@@ -106,6 +106,7 @@ export function useChatStream(options: UseChatStreamOptions) {
                   : event.sources
                     ? JSON.stringify(event.sources, null, 2)
                     : event.content ?? '',
+                Array.isArray(event.source_chunks) ? event.source_chunks : [],
               );
               break;
             case 'error':

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import clsx from 'clsx';
 
 import type { ChatMessage, DocumentItem, SearchChunk, ThinkingStep, UploadState } from './types';
-import { fetchDocuments, fetchSearchChunks, uploadFile } from './api/documents';
+import { fetchDocuments, uploadFile } from './api/documents';
 
 import { Sidebar } from './components/layout/Sidebar';
 import { Header } from './components/layout/Header';
@@ -108,8 +108,10 @@ export default function App() {
         ),
       );
     },
-    onSources: (text) => {
+    onSources: (text, sourceChunks) => {
       setSourcesNote(text);
+      setSources(sourceChunks);
+      setSelectedSourceId(sourceChunks[0]?.chunk_id ?? null);
     },
     onAgentStep: (step) => {
       setThinkingSteps((prev) => {
@@ -130,9 +132,6 @@ export default function App() {
 
   const handleQuestion = useCallback(
     (question: string) => {
-      fetchSearchChunks(question)
-        .then(setSources)
-        .catch(() => setSources([]));
       void chat.submit(question);
     },
     [chat.submit],

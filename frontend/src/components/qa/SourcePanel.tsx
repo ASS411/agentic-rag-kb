@@ -1,4 +1,4 @@
-import { Search } from 'lucide-react';
+import { FileSearch } from 'lucide-react';
 import clsx from 'clsx';
 import type { SearchChunk } from '../../types';
 import { SourceCard } from './SourceCard';
@@ -22,14 +22,14 @@ export function SourcePanel({
     <aside className={clsx('source-pane', !open && 'closed')}>
       <div className="section-heading">
         <span>来源</span>
-        <small>{sources.length ? `${sources.length} 候选项` : '等待中'}</small>
+        <small>{sources.length ? `${sources.length} 引用片段` : '等待回答来源'}</small>
       </div>
 
       {sources.length === 0 ? (
         <div className="source-empty">
-          <Search size={24} aria-hidden="true" />
-          <strong>检索到的片段将显示在这里</strong>
-          <span>每张卡片展示摘录、文档、页码和匹配分数。</span>
+          <FileSearch size={24} aria-hidden="true" />
+          <strong>回答引用的片段将显示在这里</strong>
+          <span>来源会跟随当前回答流返回，避免展示预检索候选项。</span>
         </div>
       ) : (
         <div className="source-list">
@@ -47,7 +47,7 @@ export function SourcePanel({
 
       {sourcesNote ? (
         <div className="sources-note">
-          <span>流式来源数据</span>
+          <span>来源摘要</span>
           <pre>{sourcesNote}</pre>
         </div>
       ) : null}
