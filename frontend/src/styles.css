@@ -393,16 +393,124 @@ h1 {
 }
 
 .message-body {
+  min-width: 0;
   min-height: 46px;
   padding: 16px 18px;
   color: #f2f6fa;
   line-height: 1.75;
-  white-space: pre-wrap;
 }
 
 .message.user .message-body {
   border-color: rgba(142, 199, 255, 0.22);
   background: rgba(19, 28, 40, 0.94);
+  white-space: pre-wrap;
+}
+
+.message-markdown {
+  overflow-wrap: anywhere;
+}
+
+.message-markdown > :first-child {
+  margin-top: 0;
+}
+
+.message-markdown > :last-child {
+  margin-bottom: 0;
+}
+
+.message-markdown p,
+.message-markdown ul,
+.message-markdown ol,
+.message-markdown blockquote,
+.message-markdown pre,
+.message-markdown table {
+  margin: 0 0 12px;
+}
+
+.message-markdown ul,
+.message-markdown ol {
+  padding-left: 20px;
+}
+
+.message-markdown li + li {
+  margin-top: 4px;
+}
+
+.message-markdown a {
+  color: #8ec7ff;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.message-markdown blockquote {
+  padding-left: 12px;
+  border-left: 3px solid rgba(142, 199, 255, 0.38);
+  color: #c8d5df;
+}
+
+.message-markdown code {
+  border: 1px solid rgba(232, 237, 242, 0.08);
+  border-radius: 6px;
+  padding: 2px 5px;
+  color: #c8f3e5;
+  background: rgba(7, 11, 16, 0.72);
+  font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', monospace;
+  font-size: 0.9em;
+}
+
+.message-markdown pre {
+  overflow-x: auto;
+  padding: 12px;
+  border: 1px solid rgba(232, 237, 242, 0.08);
+  border-radius: 8px;
+  background: rgba(7, 11, 16, 0.86);
+}
+
+.message-markdown pre code {
+  display: block;
+  min-width: max-content;
+  border: 0;
+  padding: 0;
+  color: #dfe8ef;
+  background: transparent;
+  line-height: 1.65;
+  white-space: pre;
+}
+
+.message-markdown table {
+  display: block;
+  width: 100%;
+  overflow-x: auto;
+  border-collapse: collapse;
+}
+
+.message-markdown th,
+.message-markdown td {
+  padding: 8px 10px;
+  border: 1px solid rgba(232, 237, 242, 0.1);
+  text-align: left;
+  vertical-align: top;
+}
+
+.message-markdown th {
+  color: #f4f7fb;
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.message-markdown .hljs-keyword,
+.message-markdown .hljs-selector-tag,
+.message-markdown .hljs-title {
+  color: #8ec7ff;
+}
+
+.message-markdown .hljs-string,
+.message-markdown .hljs-attr,
+.message-markdown .hljs-number {
+  color: #92ebca;
+}
+
+.message-markdown .hljs-comment {
+  color: #7d8d9b;
 }
 
 .typing {
