@@ -2,13 +2,9 @@ import { Send } from 'lucide-react';
 import { type FormEvent, type KeyboardEvent, useCallback, useState } from 'react';
 
 export type QuestionInputProps = {
-  /** Whether the chat is currently streaming. */
   streaming: boolean;
-  /** Whether there are documents available (controls placeholder). */
   hasDocuments: boolean;
-  /** Called when the user submits a question. */
   onSubmit: (question: string) => void;
-  /** Called to stop streaming mid-response. */
   onStop: () => void;
 };
 
@@ -42,16 +38,13 @@ export function QuestionInput({
   );
 
   return (
-    <form
-      className="question-dock"
-      onSubmit={handleSubmit}
-    >
+    <form className="question-dock" onSubmit={handleSubmit}>
       <textarea
         value={value}
         placeholder={
           hasDocuments
             ? '向当前知识库提问...'
-            : '先上传文档，也可以直接试问接口状态...'
+            : '请先上传文档，或输入问题测试聊天管道...'
         }
         onChange={(event) => setValue(event.target.value)}
         onKeyDown={handleKeyDown}

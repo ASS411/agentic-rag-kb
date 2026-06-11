@@ -21,15 +21,15 @@ export function SourcePanel({
   return (
     <aside className={clsx('source-pane', !open && 'closed')}>
       <div className="section-heading">
-        <span>来源面板</span>
-        <small>{sources.length ? `${sources.length} 条候选` : '等待检索'}</small>
+        <span>来源</span>
+        <small>{sources.length ? `${sources.length} 候选项` : '等待中'}</small>
       </div>
 
       {sources.length === 0 ? (
         <div className="source-empty">
           <Search size={24} aria-hidden="true" />
-          <strong>提问后显示检索 chunk</strong>
-          <span>每张卡片保留摘要、文件名、页码和相似度。</span>
+          <strong>检索到的片段将显示在这里</strong>
+          <span>每张卡片展示摘录、文档、页码和匹配分数。</span>
         </div>
       ) : (
         <div className="source-list">
@@ -47,7 +47,7 @@ export function SourcePanel({
 
       {sourcesNote ? (
         <div className="sources-note">
-          <span>模型返回来源</span>
+          <span>流式来源数据</span>
           <pre>{sourcesNote}</pre>
         </div>
       ) : null}

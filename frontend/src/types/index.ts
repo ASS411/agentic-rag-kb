@@ -1,19 +1,9 @@
-/* Shared TypeScript type definitions for Agentic RAG frontend. */
-
-// ---------------------------------------------------------------------------
-// API envelope
-// ---------------------------------------------------------------------------
-
 export type ApiEnvelope<T> = {
   success: boolean;
   code: number;
   message: string;
   data: T;
 };
-
-// ---------------------------------------------------------------------------
-// Document
-// ---------------------------------------------------------------------------
 
 export type DocType = 'pdf' | 'md' | 'txt';
 
@@ -34,10 +24,6 @@ export type DocumentList = {
   size: number;
 };
 
-// ---------------------------------------------------------------------------
-// Search
-// ---------------------------------------------------------------------------
-
 export type SearchChunk = {
   chunk_id: string;
   content: string;
@@ -56,27 +42,90 @@ export type SearchResponse = {
   results: SearchChunk[];
 };
 
-// ---------------------------------------------------------------------------
-// Chat
-// ---------------------------------------------------------------------------
-
 export type ChatMessage = {
   id: string;
   role: 'user' | 'assistant';
   content: string;
 };
 
-export type StreamEventType = 'token' | 'sources' | 'done' | 'error';
+export type AgentStepName =
+  | 'rewrite'
+  | 'search'
+  | 'rerank'
+  | 'check'
+  | 'replan'
+  | 'generate'
+  | 'done'
+  | (string & {});
 
-export type StreamEvent = {
-  type: StreamEventType;
+export type ThinkingStep = {
+  step: AgentStepName;
+  message?: string;
+  queries?: string[];
+  count?: number;
+  verdict?: string;
+  reasoning?: string;
+  gap?: string;
+  timestamp?: string;
+};
+
+export type SSEAgentStepEvent = {
+  type: 'agent-step';
+  step: AgentStepName;
+  message?: string;
+  queries?: string[];
+  count?: number;
+  verdict?: string;
+  reasoning?: string;
+  gap?: string;
+  timestamp?: string;
+};
+
+export type SSEAnswerChunkEvent = {
+  type: 'answer-chunk';
   content: string;
 };
+
+export type SSETokenEvent = {
+  type: 'token';
+  content: string;
+  timestamp?: string;
+};
+
+export type SSESourcesEvent = {
+  type: 'sources';
+  content?: string;
+  sources?: unknown;
+  timestamp?: string;
+};
+
+export type SSEDoneEvent = {
+  type: 'done';
+  conversation_id?: string;
+  total_rounds?: number;
+  chunks_used?: number;
+  timestamp?: string;
+};
+
+export type SSEErrorEvent = {
+  type: 'error';
+  content: string;
+  timestamp?: string;
+};
+
+export type StreamEvent =
+  | SSEAgentStepEvent
+  | SSEAnswerChunkEvent
+  | SSETokenEvent
+  | SSESourcesEvent
+  | SSEDoneEvent
+  | SSEErrorEvent;
 
 export type ChatRequest = {
   question: string;
   stream?: boolean;
   top_k?: number;
+  use_agent?: boolean;
   conversation_id?: string | null;
 };
 
@@ -86,10 +135,6 @@ export type ChatResponse = {
   question: string;
   conversation_id: string | null;
 };
-
-// ---------------------------------------------------------------------------
-// Upload
-// ---------------------------------------------------------------------------
 
 export type UploadPhase = 'idle' | 'uploading' | 'success' | 'error';
 

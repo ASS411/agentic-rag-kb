@@ -184,11 +184,10 @@ class TestAgentLoopRun:
         async for evt_json in agent.run("test?"):
             evt = json.loads(evt_json)
             assert "type" in evt
-            # agent-step events must have step, label, data
+            # agent-step events must have step, message
             if evt["type"] == "agent-step":
                 assert "step" in evt
-                assert "label" in evt
-                assert "data" in evt
+                assert "message" in evt
             elif evt["type"] == "answer-chunk":
                 assert "content" in evt
             elif evt["type"] == "sources":

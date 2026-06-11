@@ -9,10 +9,10 @@ export function WelcomePanel({ examples, streaming, onSubmitExample }: WelcomePa
     <div className="start-panel">
       <div className="start-copy">
         <span className="signal-line" />
-        <p className="eyebrow">Evidence-first Q&A</p>
-        <h2>把问题丢进知识库，让答案带着来源回来。</h2>
+        <p className="eyebrow">证据优先问答</p>
+        <h2>向知识库提问，观察智能代理收集证据。</h2>
         <p>
-          适合把零散资料放在同一张桌面上审阅：答案在中间生长，证据在旁边排队等待核验。
+          上传笔记、报告或PDF，提出需要可靠答案的问题，而不是依赖模糊的记忆。
         </p>
       </div>
       <div className="example-grid">

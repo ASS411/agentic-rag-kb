@@ -445,11 +445,10 @@ class AgentLoop:
         top_k_recall = settings.agent.top_k_recall
         top_k_rerank = settings.agent.top_k_rerank
 
-        def _evt(step, label="", data=None):
-            return _json.dumps({
-                "type": "agent-step", "step": step,
-                "label": label, "data": data or {},
-            }, ensure_ascii=False)
+        def _evt(step, message="", **extra):
+            payload = {"type": "agent-step", "step": step, "message": message}
+            payload.update(extra)
+            return _json.dumps(payload, ensure_ascii=False)
 
         def _ans(content):
             return _json.dumps({
@@ -466,23 +465,23 @@ class AgentLoop:
             return _json.dumps({"type": "done"}, ensure_ascii=False)
 
         # REWRITE
-        yield _evt("rewrite", "Query rewriting")
+        yield _evt("rewrite", message="Query rewriting")
         queries = await self._rewrite_query(question)
-        yield _evt("rewrite", f"{len(queries)} queries generated",
-                    {"queries": queries, "count": len(queries)})
+        yield _evt("rewrite", message=f"{len(queries)} queries generated",
+                    queries=queries, count=len(queries))
 
         context_pool = {}  # chunk_id -> SearchChunk
 
         for rnd in range(max_rounds):
             # SEARCH
-            yield _evt("search", f"Searching round {rnd+1}",
-                       {"round": rnd + 1, "query_count": len(queries)})
+            yield _evt("search", message=f"Searching round {rnd+1}",
+                       round=rnd + 1, query_count=len(queries))
             retriever = Retriever()
             rr = await retriever.retrieve(
                 queries, top_k_recall=top_k_recall, rerank=False)
-            yield _evt("search", f"Retrieved {rr.total_recalled} chunks",
-                       {"total_recalled": rr.total_recalled,
-                        "deduplicated": len(rr.chunks)})
+            yield _evt("search", message=f"Retrieved {rr.total_recalled} chunks",
+                       total_recalled=rr.total_recalled,
+                       deduplicated=len(rr.chunks))
 
             for c in rr.chunks:
                 if c.chunk_id not in context_pool or \
@@ -491,43 +490,45 @@ class AgentLoop:
 
             candidates = list(context_pool.values())
             if not candidates:
-                yield _evt("check", "No context found",
-                           {"sufficient": False})
+                yield _evt("check", message="No context found",
+                           verdict="insufficient")
                 break
 
             # RERANK
-            yield _evt("rerank", f"Re-ranking {len(candidates)} candidates")
+            yield _evt("rerank", message=f"Re-ranking {len(candidates)} candidates",
+                       count=len(candidates))
             reranker = Reranker()
             chunk_objs = _sc_to_chunk_batch(candidates)
             reranked = reranker.rerank(
                 question, chunk_objs, top_k=top_k_rerank)
             top_pool = _chunk_to_sc_batch(reranked)
-            yield _evt("rerank", f"Top {len(top_pool)} after rerank",
-                       {"top_k": len(top_pool)})
+            yield _evt("rerank", message=f"Top {len(top_pool)} after rerank",
+                       count=len(top_pool))
 
             # CHECK
-            yield _evt("check", "Evaluating quality")
+            yield _evt("check", message="Evaluating quality")
             check = await self._quality_check(question, top_pool)
-            yield _evt("check", "Quality evaluated",
-                       {"sufficient": check.sufficient,
-                        "reasoning": check.reasoning})
+            yield _evt("check", message="Quality evaluated",
+                       verdict="sufficient" if check.sufficient else "insufficient",
+                       reasoning=check.reasoning,
+                       gap=check.gap)
 
             if check.sufficient:
                 break
 
             if rnd < max_rounds - 1:
                 gap = check.gap or "需要更多信息"
-                yield _evt("replan", f"Replanning: {gap[:60]}",
-                           {"gap": gap})
+                yield _evt("replan", message=f"Replanning: {gap[:60]}",
+                           gap=gap)
                 queries = await self._replan(question, gap)
-                yield _evt("replan", f"{len(queries)} new queries",
-                           {"queries": queries})
+                yield _evt("replan", message=f"{len(queries)} new queries",
+                           queries=queries)
 
         # GENERATE
         final_chunks = list(context_pool.values())
         final_chunks.sort(key=lambda c: c.score, reverse=True)
-        yield _evt("generate", f"Generating from {len(final_chunks)} chunks",
-                   {"chunk_count": len(final_chunks)})
+        yield _evt("generate", message=f"Generating from {len(final_chunks)} chunks",
+                   count=len(final_chunks))
 
         builder = RAGPromptBuilder()
         messages = builder.build(final_chunks, question)

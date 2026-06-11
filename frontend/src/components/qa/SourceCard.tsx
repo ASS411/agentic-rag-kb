@@ -10,6 +10,8 @@ export type SourceCardProps = {
 };
 
 export function SourceCard({ source, index, selected, onSelect }: SourceCardProps) {
+  const score = Number.isFinite(source.score) ? Math.max(0, Math.min(1, source.score)) : 0;
+
   return (
     <button
       className={clsx('source-card', selected && 'selected')}
@@ -18,15 +20,13 @@ export function SourceCard({ source, index, selected, onSelect }: SourceCardProp
     >
       <span
         className="score-rail"
-        style={{ height: `${Math.max(10, Math.round(source.score * 100))}%` }}
+        style={{ height: `${Math.max(10, Math.round(score * 100))}%` }}
       />
       <span className="source-meta">
-        #{index + 1} / {source.doc_name || '未知文档'} / p.{source.page}
+        #{index + 1} / {source.doc_name || '未知文档'} / 第{source.page}页
       </span>
       <strong>{trimSource(source.content).slice(0, 168)}</strong>
-      <span className="source-score">
-        {Math.round(source.score * 100)}% match
-      </span>
+      <span className="source-score">{Math.round(score * 100)}% 匹配度</span>
     </button>
   );
 }

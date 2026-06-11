@@ -1,11 +1,8 @@
 import { Loader2 } from 'lucide-react';
 
 export type LoadingProps = {
-  /** Text label shown below the spinner. */
   message?: string;
-  /** Spinner size in px. */
   size?: number;
-  /** Additional class names. */
   className?: string;
 };
 

@@ -13,8 +13,8 @@ export function Sidebar({ children }: SidebarProps) {
           <Database size={20} aria-hidden="true" />
         </div>
         <div>
-          <p className="eyebrow">Agentic RAG</p>
-          <h1>知识证据台</h1>
+          <p className="eyebrow">智能检索增强</p>
+          <h1>证据库</h1>
         </div>
       </div>
 

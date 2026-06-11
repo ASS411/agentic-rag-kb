@@ -1,13 +1,14 @@
 import { useCallback, useRef, useState } from 'react';
-import type { ChatMessage } from '../types';
+import type { ChatMessage, ThinkingStep } from '../types';
 import { createChatStream } from '../api/chat';
-import { fetchSearchChunks } from '../api/documents';
 
 export type SSEState = {
   /** Whether a stream is currently in progress. */
   streaming: boolean;
   /** Last error message from the chat pipeline. */
   error: string;
+  /** Agent thinking steps streamed from the backend. */
+  thinkingSteps: ThinkingStep[];
 };
 
 export type UseChatStreamOptions = {
@@ -21,6 +22,8 @@ export type UseChatStreamOptions = {
   onError?: (assistantId: string, message: string) => void;
   /** Called when the stream finishes (success or failure). */
   onDone?: () => void;
+  /** Called when an agent step arrives. */
+  onAgentStep?: (step: ThinkingStep) => void;
 };
 
 /**
@@ -31,15 +34,16 @@ export type UseChatStreamOptions = {
  * The hook does **not** own the messages array — it uses callbacks so the
  * calling component stays in control of its own message storage.
  *
- * Also fires a side-channel search request in parallel to populate the
- * source panel eagerly (even before the LLM finishes).
+ * Agent steps are emitted separately from answer tokens so the caller can
+ * render the retrieval loop while the answer is still streaming.
  */
 export function useChatStream(options: UseChatStreamOptions) {
-  const { onStart, onToken, onSources, onError, onDone } = options;
+  const { onStart, onToken, onSources, onError, onDone, onAgentStep } = options;
 
   const [state, setState] = useState<SSEState>({
     streaming: false,
     error: '',
+    thinkingSteps: [],
   });
 
   const abortRef = useRef<{ abort: () => void } | null>(null);
@@ -61,13 +65,8 @@ export function useChatStream(options: UseChatStreamOptions) {
         content: '',
       };
 
-      setState({ streaming: true, error: '' });
+      setState((prev) => ({ ...prev, streaming: true, error: '', thinkingSteps: [] }));
       onStart(userMessage, assistantMessage);
-
-      // Fire search in parallel for eager source display
-      fetchSearchChunks(trimmed).catch(() => {
-        /* best-effort */
-      });
 
       const { abort, stream } = createChatStream({ question: trimmed });
 
@@ -76,11 +75,38 @@ export function useChatStream(options: UseChatStreamOptions) {
       try {
         for await (const event of stream) {
           switch (event.type) {
+            case 'agent-step': {
+              const step = {
+                step: event.step,
+                message: event.message,
+                queries: event.queries,
+                count: event.count,
+                verdict: event.verdict,
+                reasoning: event.reasoning,
+                gap: event.gap,
+                timestamp: event.timestamp,
+              } satisfies ThinkingStep;
+              setState((s) => ({
+                ...s,
+                thinkingSteps: [...s.thinkingSteps, step],
+              }));
+              onAgentStep?.(step);
+              break;
+            }
+            case 'answer-chunk':
+              onToken(assistantId, event.content);
+              break;
             case 'token':
               onToken(assistantId, event.content);
               break;
             case 'sources':
-              onSources(event.content);
+              onSources(
+                typeof event.sources === 'string'
+                  ? event.sources
+                  : event.sources
+                    ? JSON.stringify(event.sources, null, 2)
+                    : event.content ?? '',
+              );
               break;
             case 'error':
               throw new Error(event.content || '生成回答失败');
@@ -101,7 +127,7 @@ export function useChatStream(options: UseChatStreamOptions) {
         onDone?.();
       }
     },
-    [onStart, onToken, onSources, onError, onDone],
+    [onStart, onToken, onSources, onError, onDone, onAgentStep],
   );
 
   const stop = useCallback(() => {

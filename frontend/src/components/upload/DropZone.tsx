@@ -48,7 +48,7 @@ export function DropZone({ upload, onFiles }: DropZoneProps) {
         ) : (
           <UploadCloud size={24} aria-hidden="true" />
         )}
-        <span>拖入文档或点击上传</span>
+        <span>拖拽文件或点击上传</span>
         <small>{upload.message}</small>
       </button>
       <div className="progress-track" aria-label="上传进度">
