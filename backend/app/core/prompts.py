@@ -410,3 +410,103 @@ def build_replan_messages(question: str, gap_description: str) -> list[dict[str,
             gap_description=gap_description,
         )},
     ]
+
+
+# ---------------------------------------------------------------------------
+# Quality Check prompt (Phase 2 — module 4.3)
+# ---------------------------------------------------------------------------
+
+_QUALITY_CHECK_SYSTEM_PROMPT = (
+    "你是一个严格的检索质量评估助手。"
+    "你的任务是评估给定的上下文片段是否足以回答用户的问题。"
+    "\n\n"
+    "评估标准：\n"
+    "1. **关键信息覆盖**：上下文中是否包含回答问题的核心事实、定义或数据\n"
+    "2. **完整性**：是否涵盖了问题的所有重要方面（如原因、过程、结果等）\n"
+    "3. **时效性**：信息是否与问题的时间背景一致（如需要最新数据时）\n"
+    "4. **可靠性**：上下文来源是否可靠、内容是否连贯\n"
+    "\n\n"
+    "输出要求：\n"
+    "- 必须严格输出 JSON 对象格式\n"
+    "- sufficient 为 true 时 gap 字段为 null\n"
+    "- sufficient 为 false 时 gap 字段描述具体缺失的信息"
+)
+
+_QUALITY_CHECK_USER_TEMPLATE = """## 用户问题
+
+{question}
+
+## 检索到的上下文（共 {chunk_count} 条）
+
+{context}
+
+## 评估任务
+
+请评估上述上下文是否足以完整、准确地回答用户问题。
+
+输出 JSON 对象格式（不要包含其他文字）：
+```json
+{{
+  "sufficient": true,
+  "reasoning": "上下文包含了RAG的定义、架构组件和应用场景，足以回答用户问题。",
+  "gap": null
+}}
+```
+
+或：
+```json
+{{
+  "sufficient": false,
+  "reasoning": "上下文仅提及RAG的基本概念，未涉及用户询问的具体实现细节。",
+  "gap": "缺失RAG系统的具体实现步骤和代码示例"
+}}
+```
+
+只输出 JSON 对象，不要包含其他文字。"""
+
+
+def build_quality_check_messages(
+    question: str,
+    context_pool: list,
+    *,
+    max_chunks: int = 20,
+    max_chars_per_chunk: int = 800,
+) -> list[dict[str, str]]:
+    """Build messages for the quality-check (LLM-as-Judge) LLM call.
+
+    Parameters
+    ----------
+    question:
+        The user's original natural-language question.
+    context_pool:
+        List of ``SearchChunk`` objects representing the current
+        retrieval context pool.
+    max_chunks:
+        Maximum chunks to include in the context view.
+    max_chars_per_chunk:
+        Truncate each chunk's content to this many characters.
+
+    Returns
+    -------
+    list[dict[str, str]]
+        Messages list ready for ``LLMClient.generate()``.
+    """
+    from app.core.prompts import format_context
+
+    context_text = format_context(
+        context_pool,
+        max_chunks=max_chunks,
+        max_chars_per_chunk=max_chars_per_chunk,
+        show_score=False,
+    )
+
+    user_content = _QUALITY_CHECK_USER_TEMPLATE.format(
+        question=question,
+        chunk_count=len(context_pool),
+        context=context_text,
+    )
+
+    return [
+        {"role": "system", "content": _QUALITY_CHECK_SYSTEM_PROMPT},
+        {"role": "user", "content": user_content},
+    ]
