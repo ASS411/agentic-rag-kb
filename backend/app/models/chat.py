@@ -48,6 +48,12 @@ class ChatRequest(BaseModel):
         default=None,
         description="Reserved for multi-turn conversations (Phase 4+)",
     )
+    use_agent: bool = Field(
+        default=False,
+        description="When True, use the Agent loop (rewrite → search → "
+                    "rerank → check → generate). When False, use the simple "
+                    "single-search path (Phase 1 behaviour).",
+    )
 
 
 class ChatResponse(BaseModel):

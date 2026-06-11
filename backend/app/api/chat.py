@@ -30,6 +30,7 @@ from app.models.chat import (
 from app.models.response import APIResponse
 from app.models.search import SearchChunk
 from app.api.search import _assemble_response, _cosine_similarity_from_distance
+from app.models.sse import SSEStepEvent, SSEAnswerEvent, SSESourcesEvent, SSEDoneEvent
 
 router = APIRouter(prefix="/chat", tags=["chat"])
 
@@ -151,6 +152,16 @@ async def chat(
     )
 
     if body.stream:
+        if body.use_agent:
+            return StreamingResponse(
+                _stream_agent_chat(body),
+                media_type="text/event-stream",
+                headers={
+                    "Cache-Control": "no-cache",
+                    "Connection": "keep-alive",
+                    "X-Accel-Buffering": "no",
+                },
+            )
         return StreamingResponse(
             _stream_chat(body),
             media_type="text/event-stream",
@@ -162,6 +173,28 @@ async def chat(
         )
     else:
         return await _non_stream_chat(body)
+
+
+# ---------------------------------------------------------------------------
+# Agent streaming implementation (module 5.4)
+# ---------------------------------------------------------------------------
+
+
+async def _stream_agent_chat(body: ChatRequest):
+    """Run the agent loop and yield SSE events.
+
+    Delegates to ``AgentLoop.run()`` which yields JSON event strings.
+    Each string is wrapped as an SSE ``data:`` line.
+    """
+    from app.core.agent import AgentLoop
+
+    agent = AgentLoop()
+    try:
+        async for event_json in agent.run(body.question):
+            yield f"data: {event_json}\n\n"
+    except Exception as exc:
+        logger.error("Agent loop error: {}", exc)
+        yield _sse_error(f"Agent error: {exc}")
 
 
 # ---------------------------------------------------------------------------

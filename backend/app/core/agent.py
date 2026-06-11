@@ -9,17 +9,21 @@ from __future__ import annotations
 
 import json
 import re
+from enum import Enum
 
 from pydantic import BaseModel, Field
 
 from loguru import logger
 
+from app.config import settings
 from app.core.llm import LLMClient, LLMError
 from app.core.prompts import (
     build_quality_check_messages,
     build_replan_messages,
     build_rewrite_messages,
+    format_sources,
 )
+from app.core.prompts import RAGPromptBuilder
 from app.models.search import SearchChunk
 
 
@@ -141,6 +145,60 @@ def _parse_check_result(raw: str) -> dict:
         "reasoning": "Failed to parse LLM response",
         "gap": "quality check JSON parsing error",
     }
+
+
+# ---------------------------------------------------------------------------
+# Chunk conversion helpers (for run() loop)
+# ---------------------------------------------------------------------------
+
+
+def _sc_to_chunk_batch(sc_list: list[SearchChunk]):
+    """Convert a list of SearchChunk to the chunker Chunk dataclass."""
+    from app.core.chunker import Chunk
+    from app.models.document import DocType
+
+    result = []
+    for sc in sc_list:
+        dt = DocType(sc.doc_type) if sc.doc_type in ("pdf", "md", "txt") else DocType.TXT
+        result.append(Chunk(
+            id=sc.chunk_id, content=sc.content,
+            doc_id=sc.doc_id, doc_name=sc.doc_name, doc_type=dt,
+            page=sc.page, chunk_index=sc.chunk_index,
+            char_count=len(sc.content),
+            metadata={**sc.metadata, "score": sc.score},
+        ))
+    return result
+
+
+def _chunk_to_sc_batch(chunk_list):
+    """Convert a list of chunker Chunk back to SearchChunk."""
+    result = []
+    for c in chunk_list:
+        score = float(c.metadata.get("rerank_score", c.metadata.get("score", 0.0)))
+        result.append(SearchChunk(
+            chunk_id=c.id, content=c.content, score=score,
+            doc_id=c.doc_id, doc_name=c.doc_name,
+            doc_type=c.doc_type.value if hasattr(c.doc_type, "value") else str(c.doc_type),
+            page=c.page, chunk_index=c.chunk_index, metadata=c.metadata,
+        ))
+    return result
+
+
+# ---------------------------------------------------------------------------
+# AgentStep enum (task 5.1)
+# ---------------------------------------------------------------------------
+
+
+class AgentStep(str, Enum):
+    """Steps in the agent pipeline state machine."""
+
+    REWRITE = "rewrite"
+    SEARCH = "search"
+    RERANK = "rerank"
+    CHECK = "check"
+    REPLAN = "replan"
+    GENERATE = "generate"
+    DONE = "done"
 
 
 # ---------------------------------------------------------------------------
@@ -370,3 +428,120 @@ class AgentLoop:
             result.gap,
         )
         return result
+
+    # ------------------------------------------------------------------
+    # Main agent loop (task 5.2)
+    # ------------------------------------------------------------------
+
+    async def run(self, question: str):
+        """Run the full agent pipeline: rewrite -> search -> rerank -> check
+        -> (replan -> search -> ...) -> generate. Yields SSE event strings.
+        """
+        import json as _json
+        from app.core.retriever import Retriever
+        from app.core.reranker import Reranker
+
+        max_rounds = settings.agent.max_rounds
+        top_k_recall = settings.agent.top_k_recall
+        top_k_rerank = settings.agent.top_k_rerank
+
+        def _evt(step, label="", data=None):
+            return _json.dumps({
+                "type": "agent-step", "step": step,
+                "label": label, "data": data or {},
+            }, ensure_ascii=False)
+
+        def _ans(content):
+            return _json.dumps({
+                "type": "answer-chunk", "content": content,
+            }, ensure_ascii=False)
+
+        def _src(content, ids=None):
+            return _json.dumps({
+                "type": "sources", "content": content,
+                "chunk_ids": ids or [],
+            }, ensure_ascii=False)
+
+        def _done():
+            return _json.dumps({"type": "done"}, ensure_ascii=False)
+
+        # REWRITE
+        yield _evt("rewrite", "Query rewriting")
+        queries = await self._rewrite_query(question)
+        yield _evt("rewrite", f"{len(queries)} queries generated",
+                    {"queries": queries, "count": len(queries)})
+
+        context_pool = {}  # chunk_id -> SearchChunk
+
+        for rnd in range(max_rounds):
+            # SEARCH
+            yield _evt("search", f"Searching round {rnd+1}",
+                       {"round": rnd + 1, "query_count": len(queries)})
+            retriever = Retriever()
+            rr = await retriever.retrieve(
+                queries, top_k_recall=top_k_recall, rerank=False)
+            yield _evt("search", f"Retrieved {rr.total_recalled} chunks",
+                       {"total_recalled": rr.total_recalled,
+                        "deduplicated": len(rr.chunks)})
+
+            for c in rr.chunks:
+                if c.chunk_id not in context_pool or \
+                   c.score > context_pool[c.chunk_id].score:
+                    context_pool[c.chunk_id] = c
+
+            candidates = list(context_pool.values())
+            if not candidates:
+                yield _evt("check", "No context found",
+                           {"sufficient": False})
+                break
+
+            # RERANK
+            yield _evt("rerank", f"Re-ranking {len(candidates)} candidates")
+            reranker = Reranker()
+            chunk_objs = _sc_to_chunk_batch(candidates)
+            reranked = reranker.rerank(
+                question, chunk_objs, top_k=top_k_rerank)
+            top_pool = _chunk_to_sc_batch(reranked)
+            yield _evt("rerank", f"Top {len(top_pool)} after rerank",
+                       {"top_k": len(top_pool)})
+
+            # CHECK
+            yield _evt("check", "Evaluating quality")
+            check = await self._quality_check(question, top_pool)
+            yield _evt("check", "Quality evaluated",
+                       {"sufficient": check.sufficient,
+                        "reasoning": check.reasoning})
+
+            if check.sufficient:
+                break
+
+            if rnd < max_rounds - 1:
+                gap = check.gap or "需要更多信息"
+                yield _evt("replan", f"Replanning: {gap[:60]}",
+                           {"gap": gap})
+                queries = await self._replan(question, gap)
+                yield _evt("replan", f"{len(queries)} new queries",
+                           {"queries": queries})
+
+        # GENERATE
+        final_chunks = list(context_pool.values())
+        final_chunks.sort(key=lambda c: c.score, reverse=True)
+        yield _evt("generate", f"Generating from {len(final_chunks)} chunks",
+                   {"chunk_count": len(final_chunks)})
+
+        builder = RAGPromptBuilder()
+        messages = builder.build(final_chunks, question)
+        try:
+            async for token in self._llm.generate_stream(messages):
+                yield _ans(token)
+        except LLMError as exc:
+            yield _json.dumps({
+                "type": "error", "content": f"LLM error: {exc}",
+            }, ensure_ascii=False)
+            return
+
+        # SOURCES + DONE
+        sources_text = format_sources(final_chunks)
+        chunk_ids = [c.chunk_id for c in final_chunks]
+        yield _src(sources_text, chunk_ids)
+        yield _done()
