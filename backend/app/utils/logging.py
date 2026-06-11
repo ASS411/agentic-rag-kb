@@ -60,7 +60,7 @@ def _formatter(record: dict) -> str:
         return (
             "<green>{time:YYYY-MM-DD HH:mm:ss.SSS}</green> | "
             "<level>{level: <8}</level> | "
-            "<cyan>[{extra[rid]}]</cyan> | "
+            "<cyan>[{rid}]</cyan> | "
             "<level>{message}</level>\n"
         ).format(rid=rid, **record)
     return (
