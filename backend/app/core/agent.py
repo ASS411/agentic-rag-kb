@@ -476,6 +476,7 @@ class AgentLoop:
                     queries=queries, count=len(queries))
 
         context_pool = {}  # chunk_id -> SearchChunk
+        top_pool: list[SearchChunk] = []
 
         for rnd in range(max_rounds):
             # SEARCH
@@ -530,10 +531,16 @@ class AgentLoop:
                            queries=queries)
 
         # GENERATE
-        final_chunks = list(context_pool.values())
-        final_chunks.sort(key=lambda c: c.score, reverse=True)
-        yield _evt("generate", message=f"Generating from {len(final_chunks)} chunks",
-                   count=len(final_chunks))
+        final_chunks = top_pool or sorted(
+            context_pool.values(),
+            key=lambda c: c.metadata.get("rerank_score", c.score),
+            reverse=True,
+        )
+        yield _evt(
+            "generate",
+            message=f"Generating from {len(final_chunks)} chunks",
+            count=len(final_chunks),
+        )
 
         builder = RAGPromptBuilder()
         messages = builder.build(final_chunks, question)

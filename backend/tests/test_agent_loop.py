@@ -61,10 +61,13 @@ def _mock_reranker(monkeypatch, top_k=3):
             pass
 
         def rerank(self, question, chunks, top_k=top_k):
-            # Return first top_k chunks with fake rerank scores
+            # Return the last top_k chunks with fake rerank scores so the
+            # test can detect whether generation uses reranked output.
             for c in chunks:
-                c.metadata["rerank_score"] = 0.95
-            result = chunks[:top_k]
+                c.metadata["rerank_score"] = 0.1
+            result = chunks[-top_k:]
+            for idx, c in enumerate(result):
+                c.metadata["rerank_score"] = 0.9 - idx * 0.1
             return result
 
         def compute_similarity(self, pairs):
@@ -165,6 +168,37 @@ class TestAgentLoopRun:
         assert "answer-chunk" in types
         assert "sources" in types
         assert "done" in types
+
+    @pytest.mark.asyncio
+    async def test_sources_come_from_reranked_top_pool(self, monkeypatch):
+        """Final sources should reflect reranked chunks, not raw recall order."""
+        from app.config import settings
+
+        original_top_k = settings.agent.top_k_rerank
+        settings.agent.top_k_rerank = 2
+        try:
+            _mock_retriever(monkeypatch, dedup_count=4)
+            _mock_reranker(monkeypatch, top_k=2)
+
+            agent = _make_patched_agent()
+            agent._llm.generate.return_value = '["q1"]'
+
+            async def _fake_check(question, context_pool, **kw):
+                from app.core.agent import CheckResult
+                return CheckResult(sufficient=True, reasoning="ok")
+
+            agent._quality_check = _fake_check
+
+            import json
+
+            events = [json.loads(evt) async for evt in agent.run("test?")]
+            sources_evt = next(evt for evt in events if evt["type"] == "sources")
+
+            source_chunks = sources_evt["source_chunks"]
+            assert [chunk["chunk_id"] for chunk in source_chunks] == ["c2", "c3"]
+            assert source_chunks[0]["score"] > source_chunks[1]["score"]
+        finally:
+            settings.agent.top_k_rerank = original_top_k
 
     @pytest.mark.asyncio
     async def test_event_json_format(self, monkeypatch):
