@@ -16,6 +16,8 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from app.models.search import SearchChunk
+
 
 class SSEStepEvent(BaseModel):
     """Emitted when the agent enters a new step in the pipeline."""
@@ -58,6 +60,10 @@ class SSESourcesEvent(BaseModel):
     chunk_ids: list[str] = Field(
         default_factory=list,
         description="IDs of chunks used in the final answer",
+    )
+    source_chunks: list[SearchChunk] = Field(
+        default_factory=list,
+        description="Structured chunks used by the answer/source panel",
     )
 
 

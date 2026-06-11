@@ -10,6 +10,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
+from app.models.search import SearchChunk
+
 
 class ChatRequest(BaseModel):
     """Chat request body.
@@ -67,6 +69,10 @@ class ChatResponse(BaseModel):
         default="",
         description="Pre-formatted source list (Markdown)",
     )
+    source_chunks: list[SearchChunk] = Field(
+        default_factory=list,
+        description="Structured source chunks used to build the answer",
+    )
     question: str = Field(
         ...,
         description="Original question (echoed back)",
@@ -88,4 +94,8 @@ class ChatStreamChunk(BaseModel):
         default="",
         description="Token text (type=token) or source list (type=sources) "
         "or error message (type=error)",
+    )
+    source_chunks: list[SearchChunk] = Field(
+        default_factory=list,
+        description="Structured source chunks when type=sources",
     )

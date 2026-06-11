@@ -39,12 +39,18 @@ router = APIRouter(prefix="/chat", tags=["chat"])
 # SSE helpers
 # ---------------------------------------------------------------------------
 
-def _sse_event(event_type: str, content: str = "") -> str:
+def _source_chunks_payload(chunks: list[SearchChunk]) -> list[dict]:
+    """Serialize retrieved chunks for frontend source cards."""
+    return [chunk.model_dump(mode="json") for chunk in chunks]
+
+
+def _sse_event(event_type: str, content: str = "", **extra) -> str:
     """Build a single SSE event string.
 
     Format: ``data: {json}\n\n``
     """
     payload = {"type": event_type, "content": content}
+    payload.update(extra)
     return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
 
 
@@ -244,7 +250,11 @@ async def _stream_chat(body: ChatRequest) -> AsyncGenerator[str, None]:
         return
 
     # ── 4. Send sources + done ──────────────────────────────────────
-    yield _sse_event("sources", sources_text)
+    yield _sse_event(
+        "sources",
+        sources_text,
+        source_chunks=_source_chunks_payload(chunks),
+    )
     yield _sse_event("done", "")
 
 
@@ -292,6 +302,7 @@ async def _non_stream_chat(body: ChatRequest) -> JSONResponse:
     response = ChatResponse(
         answer=answer,
         sources=sources_text,
+        source_chunks=chunks,
         question=body.question,
         conversation_id=body.conversation_id,
     )

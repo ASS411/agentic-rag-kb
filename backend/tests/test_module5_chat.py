@@ -15,6 +15,22 @@ from app.main import app
 client = TestClient(app)
 
 
+def _source_chunk(chunk_id: str = "chunk_1"):
+    from app.models.search import SearchChunk
+
+    return SearchChunk(
+        chunk_id=chunk_id,
+        content="source text",
+        score=0.91,
+        doc_id="doc_1",
+        doc_name="notes.md",
+        doc_type="md",
+        page=1,
+        chunk_index=0,
+        metadata={"section": "intro"},
+    )
+
+
 # ---------------------------------------------------------------------------
 # Non-streaming (5.4)
 # ---------------------------------------------------------------------------
@@ -23,7 +39,7 @@ class TestNonStreamChat:
 
     def test_returns_json_response(self):
         with patch("app.api.chat._retrieve_chunks") as mock_retrieve:
-            mock_retrieve.return_value = []
+            mock_retrieve.return_value = [_source_chunk()]
             with patch("app.api.chat.LLMClient") as mock_llm_class:
                 mock_llm = MagicMock()
                 mock_llm.generate = AsyncMock(return_value="answer text")
@@ -38,6 +54,7 @@ class TestNonStreamChat:
                 body = response.json()
                 assert body["success"] is True
                 assert body["data"]["answer"] == "answer text"
+                assert body["data"]["source_chunks"][0]["chunk_id"] == "chunk_1"
 
     def test_question_too_long_returns_422(self):
         response = client.post(
@@ -107,7 +124,10 @@ class TestStreamChat:
                 mock_llm.generate_stream = MagicMock(return_value=_fake_stream())
                 mock_llm_class.return_value = mock_llm
 
-                response = client.post("/api/v1/chat", json={"question": "hi"})
+                response = client.post(
+                    "/api/v1/chat",
+                    json={"question": "hi", "use_agent": False},
+                )
 
                 assert response.status_code == 200
                 ct = response.headers.get("content-type", "")
@@ -115,7 +135,7 @@ class TestStreamChat:
 
     def test_stream_has_token_sources_done_events(self):
         with patch("app.api.chat._retrieve_chunks") as mock_retrieve:
-            mock_retrieve.return_value = []
+            mock_retrieve.return_value = [_source_chunk()]
             with patch("app.api.chat.LLMClient") as mock_llm_class:
 
                 async def _fake_stream(*args, **kwargs):
@@ -126,7 +146,10 @@ class TestStreamChat:
                 mock_llm.generate_stream = MagicMock(return_value=_fake_stream())
                 mock_llm_class.return_value = mock_llm
 
-                response = client.post("/api/v1/chat", json={"question": "hello"})
+                response = client.post(
+                    "/api/v1/chat",
+                    json={"question": "hello", "use_agent": False},
+                )
 
                 body = response.text
                 assert "data:" in body
@@ -140,6 +163,8 @@ class TestStreamChat:
                 assert "token" in types
                 assert "sources" in types
                 assert "done" in types
+                sources_event = [e for e in events if e["type"] == "sources"][0]
+                assert sources_event["source_chunks"][0]["chunk_id"] == "chunk_1"
 
     def test_stream_event_structure(self):
         with patch("app.api.chat._retrieve_chunks") as mock_retrieve:
@@ -153,7 +178,10 @@ class TestStreamChat:
                 mock_llm.generate_stream = MagicMock(return_value=_fake_stream())
                 mock_llm_class.return_value = mock_llm
 
-                response = client.post("/api/v1/chat", json={"question": "test"})
+                response = client.post(
+                    "/api/v1/chat",
+                    json={"question": "test", "use_agent": False},
+                )
                 body = response.text
 
                 for line in body.strip().split("\n"):
@@ -175,7 +203,10 @@ class TestStreamChat:
                 mock_llm.generate_stream = MagicMock(return_value=_fake_stream())
                 mock_llm_class.return_value = mock_llm
 
-                response = client.post("/api/v1/chat", json={"question": "default"})
+                response = client.post(
+                    "/api/v1/chat",
+                    json={"question": "default", "use_agent": False},
+                )
                 ct = response.headers.get("content-type", "")
                 assert "text/event-stream" in ct
 
@@ -198,9 +229,14 @@ class TestSSEEventFormat:
     def test_sse_event_sources(self):
         from app.api.chat import _sse_event
 
-        result = _sse_event("sources", "1. **doc.pdf**")
+        result = _sse_event(
+            "sources",
+            "1. **doc.pdf**",
+            source_chunks=[_source_chunk().model_dump(mode="json")],
+        )
         parsed = json.loads(result[6:].strip())
         assert parsed["type"] == "sources"
+        assert parsed["source_chunks"][0]["doc_name"] == "notes.md"
 
     def test_sse_event_done(self):
         from app.api.chat import _sse_event

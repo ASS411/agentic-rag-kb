@@ -456,9 +456,14 @@ class AgentLoop:
             }, ensure_ascii=False)
 
         def _src(content, ids=None):
+            source_chunks = [
+                chunk.model_dump(mode="json")
+                for chunk in final_chunks
+            ]
             return _json.dumps({
                 "type": "sources", "content": content,
                 "chunk_ids": ids or [],
+                "source_chunks": source_chunks,
             }, ensure_ascii=False)
 
         def _done():

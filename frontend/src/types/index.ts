@@ -96,6 +96,7 @@ export type SSESourcesEvent = {
   type: 'sources';
   content?: string;
   sources?: unknown;
+  source_chunks?: SearchChunk[];
   timestamp?: string;
 };
 
@@ -132,6 +133,7 @@ export type ChatRequest = {
 export type ChatResponse = {
   answer: string;
   sources: string;
+  source_chunks: SearchChunk[];
   question: string;
   conversation_id: string | null;
 };
