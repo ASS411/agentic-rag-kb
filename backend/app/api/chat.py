@@ -11,6 +11,7 @@ Supports:
 from __future__ import annotations
 
 import json
+from datetime import datetime, timezone
 from typing import AsyncGenerator
 
 from fastapi import APIRouter, HTTPException
@@ -30,7 +31,13 @@ from app.models.chat import (
 from app.models.response import APIResponse
 from app.models.search import SearchChunk
 from app.api.search import _assemble_response, _cosine_similarity_from_distance
-from app.models.sse import SSEStepEvent, SSEAnswerEvent, SSESourcesEvent, SSEDoneEvent
+from app.models.sse import (
+    SSEStepEvent,
+    SSEAnswerEvent,
+    SSEAnswerDoneEvent,
+    SSESourcesEvent,
+    SSEDoneEvent,
+)
 
 router = APIRouter(prefix="/chat", tags=["chat"])
 
@@ -44,19 +51,23 @@ def _source_chunks_payload(chunks: list[SearchChunk]) -> list[dict]:
     return [chunk.model_dump(mode="json") for chunk in chunks]
 
 
+def _timestamp() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
 def _sse_event(event_type: str, content: str = "", **extra) -> str:
     """Build a single SSE event string.
 
     Format: ``data: {json}\n\n``
     """
-    payload = {"type": event_type, "content": content}
+    payload = {"type": event_type, "content": content, "timestamp": _timestamp()}
     payload.update(extra)
     return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
 
 
 def _sse_error(message: str) -> str:
     """Build an SSE error event."""
-    payload = {"type": "error", "content": message}
+    payload = {"type": "error", "content": message, "timestamp": _timestamp()}
     return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
 
 
@@ -255,7 +266,14 @@ async def _stream_chat(body: ChatRequest) -> AsyncGenerator[str, None]:
         sources_text,
         source_chunks=_source_chunks_payload(chunks),
     )
-    yield _sse_event("done", "")
+    yield _sse_event("answer-done", "")
+    yield _sse_event(
+        "done",
+        "",
+        conversation_id=body.conversation_id,
+        total_rounds=1,
+        chunks_used=len(chunks),
+    )
 
 
 # ---------------------------------------------------------------------------

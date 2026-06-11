@@ -162,9 +162,14 @@ class TestStreamChat:
                 types = [e["type"] for e in events]
                 assert "token" in types
                 assert "sources" in types
+                assert "answer-done" in types
                 assert "done" in types
                 sources_event = [e for e in events if e["type"] == "sources"][0]
                 assert sources_event["source_chunks"][0]["chunk_id"] == "chunk_1"
+                done_event = [e for e in events if e["type"] == "done"][0]
+                assert done_event["timestamp"]
+                assert "total_rounds" in done_event
+                assert "chunks_used" in done_event
 
     def test_stream_event_structure(self):
         with patch("app.api.chat._retrieve_chunks") as mock_retrieve:
@@ -189,7 +194,8 @@ class TestStreamChat:
                         event = json.loads(line[6:])
                         assert "type" in event
                         assert "content" in event
-                        assert event["type"] in ("token", "sources", "done", "error")
+                        assert "timestamp" in event
+                        assert event["type"] in ("token", "sources", "answer-done", "done", "error")
 
     def test_stream_default_when_no_stream_param(self):
         with patch("app.api.chat._retrieve_chunks") as mock_retrieve:
@@ -224,7 +230,9 @@ class TestSSEEventFormat:
         assert result.startswith("data: ")
         assert result.endswith("\n\n")
         parsed = json.loads(result[6:].strip())
-        assert parsed == {"type": "token", "content": "hello"}
+        assert parsed["type"] == "token"
+        assert parsed["content"] == "hello"
+        assert parsed["timestamp"]
 
     def test_sse_event_sources(self):
         from app.api.chat import _sse_event
@@ -244,6 +252,15 @@ class TestSSEEventFormat:
         result = _sse_event("done", "")
         parsed = json.loads(result[6:].strip())
         assert parsed["type"] == "done"
+        assert parsed["timestamp"]
+
+    def test_sse_event_answer_done(self):
+        from app.api.chat import _sse_event
+
+        result = _sse_event("answer-done", "")
+        parsed = json.loads(result[6:].strip())
+        assert parsed["type"] == "answer-done"
+        assert parsed["timestamp"]
 
     def test_sse_error(self):
         from app.api.chat import _sse_error

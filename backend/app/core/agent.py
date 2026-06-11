@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import re
+from datetime import datetime, timezone
 from enum import Enum
 
 from pydantic import BaseModel, Field
@@ -446,14 +447,24 @@ class AgentLoop:
         top_k_rerank = settings.agent.top_k_rerank
 
         def _evt(step, message="", **extra):
-            payload = {"type": "agent-step", "step": step, "message": message}
+            payload = {
+                "type": "agent-step",
+                "step": step,
+                "message": message,
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+            }
             payload.update(extra)
             return _json.dumps(payload, ensure_ascii=False)
 
         def _ans(content):
-            return _json.dumps({
-                "type": "answer-chunk", "content": content,
-            }, ensure_ascii=False)
+            return _json.dumps(
+                {
+                    "type": "answer-chunk",
+                    "content": content,
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                },
+                ensure_ascii=False,
+            )
 
         def _src(content, ids=None):
             source_chunks = [
@@ -464,10 +475,17 @@ class AgentLoop:
                 "type": "sources", "content": content,
                 "chunk_ids": ids or [],
                 "source_chunks": source_chunks,
+                "timestamp": datetime.now(timezone.utc).isoformat(),
             }, ensure_ascii=False)
 
         def _done():
-            return _json.dumps({"type": "done"}, ensure_ascii=False)
+            return _json.dumps(
+                {
+                    "type": "answer-done",
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                },
+                ensure_ascii=False,
+            )
 
         # REWRITE
         yield _evt("rewrite", message="Query rewriting")
@@ -477,8 +495,10 @@ class AgentLoop:
 
         context_pool = {}  # chunk_id -> SearchChunk
         top_pool: list[SearchChunk] = []
+        rounds_completed = 0
 
         for rnd in range(max_rounds):
+            rounds_completed = rnd + 1
             # SEARCH
             yield _evt("search", message=f"Searching round {rnd+1}",
                        round=rnd + 1, query_count=len(queries))
@@ -558,3 +578,14 @@ class AgentLoop:
         chunk_ids = [c.chunk_id for c in final_chunks]
         yield _src(sources_text, chunk_ids)
         yield _done()
+        yield _json.dumps(
+            {
+                "type": "done",
+                "content": "",
+                "conversation_id": None,
+                "total_rounds": rounds_completed,
+                "chunks_used": len(final_chunks),
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+            },
+            ensure_ascii=False,
+        )

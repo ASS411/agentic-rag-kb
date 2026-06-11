@@ -61,6 +61,7 @@ export function parseSseBlock(block: string): StreamEvent | null {
       [
         'agent-step',
         'answer-chunk',
+        'answer-done',
         'token',
         'sources',
         'done',

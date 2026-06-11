@@ -37,6 +37,10 @@ class SSEStepEvent(BaseModel):
         description="Step-specific metadata (queries, chunk counts, "
                     "scores, evaluation result, etc.)",
     )
+    timestamp: str | None = Field(
+        default=None,
+        description="ISO timestamp when the step event was emitted",
+    )
 
 
 class SSEAnswerEvent(BaseModel):
@@ -46,6 +50,20 @@ class SSEAnswerEvent(BaseModel):
     content: str = Field(
         default="",
         description="Incremental token text (may be empty for control events)",
+    )
+    timestamp: str | None = Field(
+        default=None,
+        description="ISO timestamp when the token was emitted",
+    )
+
+
+class SSEAnswerDoneEvent(BaseModel):
+    """Optional marker emitted when the answer stream has ended."""
+
+    type: str = Field(default="answer-done")
+    timestamp: str | None = Field(
+        default=None,
+        description="ISO timestamp when answer generation completed",
     )
 
 
@@ -65,6 +83,10 @@ class SSESourcesEvent(BaseModel):
         default_factory=list,
         description="Structured chunks used by the answer/source panel",
     )
+    timestamp: str | None = Field(
+        default=None,
+        description="ISO timestamp when the sources were emitted",
+    )
 
 
 class SSEDoneEvent(BaseModel):
@@ -72,3 +94,19 @@ class SSEDoneEvent(BaseModel):
 
     type: str = Field(default="done")
     content: str = Field(default="")
+    conversation_id: str | None = Field(
+        default=None,
+        description="Conversation identifier when multi-turn support is enabled",
+    )
+    total_rounds: int | None = Field(
+        default=None,
+        description="How many agent rounds were executed",
+    )
+    chunks_used: int | None = Field(
+        default=None,
+        description="How many chunks were used in the final answer",
+    )
+    timestamp: str | None = Field(
+        default=None,
+        description="ISO timestamp when the stream ended",
+    )

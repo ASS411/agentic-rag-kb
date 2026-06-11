@@ -96,6 +96,8 @@ export function useChatStream(options: UseChatStreamOptions) {
             case 'answer-chunk':
               onToken(assistantId, event.content);
               break;
+            case 'answer-done':
+              break;
             case 'token':
               onToken(assistantId, event.content);
               break;

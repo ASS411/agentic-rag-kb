@@ -88,6 +88,13 @@ export type SSEAgentStepEvent = {
 export type SSEAnswerChunkEvent = {
   type: 'answer-chunk';
   content: string;
+  timestamp?: string;
+};
+
+export type SSEAnswerDoneEvent = {
+  type: 'answer-done';
+  content?: string;
+  timestamp?: string;
 };
 
 export type SSETokenEvent = {
@@ -106,6 +113,7 @@ export type SSESourcesEvent = {
 
 export type SSEDoneEvent = {
   type: 'done';
+  content?: string;
   conversation_id?: string;
   total_rounds?: number;
   chunks_used?: number;
@@ -121,6 +129,7 @@ export type SSEErrorEvent = {
 export type StreamEvent =
   | SSEAgentStepEvent
   | SSEAnswerChunkEvent
+  | SSEAnswerDoneEvent
   | SSETokenEvent
   | SSESourcesEvent
   | SSEDoneEvent

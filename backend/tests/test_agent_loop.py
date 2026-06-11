@@ -166,6 +166,7 @@ class TestAgentLoopRun:
         import json
         types = [json.loads(e)["type"] for e in events]
         assert "answer-chunk" in types
+        assert "answer-done" in types
         assert "sources" in types
         assert "done" in types
 
@@ -201,6 +202,29 @@ class TestAgentLoopRun:
             settings.agent.top_k_rerank = original_top_k
 
     @pytest.mark.asyncio
+    async def test_done_event_contains_summary_fields(self, monkeypatch):
+        _mock_retriever(monkeypatch)
+        _mock_reranker(monkeypatch)
+
+        agent = _make_patched_agent()
+        agent._llm.generate.return_value = '["q1"]'
+
+        async def _fake_check(question, context_pool, **kw):
+            from app.core.agent import CheckResult
+            return CheckResult(sufficient=True, reasoning="ok")
+
+        agent._quality_check = _fake_check
+
+        import json
+
+        events = [json.loads(evt) async for evt in agent.run("test?")]
+        done_evt = next(evt for evt in events if evt["type"] == "done")
+        assert done_evt["timestamp"]
+        assert done_evt["conversation_id"] is None
+        assert done_evt["total_rounds"] == 1
+        assert done_evt["chunks_used"] > 0
+
+    @pytest.mark.asyncio
     async def test_event_json_format(self, monkeypatch):
         """Each yield is valid JSON with expected keys."""
         _mock_retriever(monkeypatch)
@@ -224,10 +248,15 @@ class TestAgentLoopRun:
                 assert "message" in evt
             elif evt["type"] == "answer-chunk":
                 assert "content" in evt
+            elif evt["type"] == "answer-done":
+                assert "timestamp" in evt
             elif evt["type"] == "sources":
                 assert "content" in evt
                 assert "chunk_ids" in evt
             elif evt["type"] == "done":
+                assert "timestamp" in evt
+                assert "total_rounds" in evt
+                assert "chunks_used" in evt
                 pass  # minimal
             elif evt["type"] == "error":
                 pass
