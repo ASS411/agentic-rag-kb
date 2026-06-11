@@ -54,10 +54,18 @@ export function parseSseBlock(block: string): StreamEvent | null {
   try {
     const parsed = JSON.parse(data) as StreamEvent;
     if (
-      parsed.type === 'token' ||
-      parsed.type === 'sources' ||
-      parsed.type === 'done' ||
-      parsed.type === 'error'
+      parsed &&
+      typeof parsed === 'object' &&
+      'type' in parsed &&
+      typeof parsed.type === 'string' &&
+      [
+        'agent-step',
+        'answer-chunk',
+        'token',
+        'sources',
+        'done',
+        'error',
+      ].includes(parsed.type)
     ) {
       return parsed;
     }

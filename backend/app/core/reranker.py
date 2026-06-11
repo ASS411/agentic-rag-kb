@@ -77,9 +77,12 @@ class Reranker:
     ) -> None:
         reranker_cfg = settings.reranker
 
-        self._model_name = model_name or reranker_cfg.model
+        raw_name = model_name or reranker_cfg.model
         self._device = device or reranker_cfg.device
         self._batch_size = batch_size or _MAX_PAIRS_PER_BATCH
+
+        # Resolve local ModelScope cache path when available
+        self._model_name = self._resolve_model_path(raw_name)
 
         # Model is loaded lazily — see _ensure_model()
         self._model: object = None  # type: ignore[assignment]
@@ -206,6 +209,44 @@ class Reranker:
     # ------------------------------------------------------------------
     # Internal
     # ------------------------------------------------------------------
+
+    @staticmethod
+    def _resolve_model_path(model_name: str) -> str:
+        """Resolve *model_name* to a local path when a ModelScope cache exists.
+
+        If *model_name* is already an absolute path, return it unchanged.
+        Otherwise, if ``settings.reranker.modelscope_cache_dir`` is set and
+        a matching model directory exists in the ModelScope cache layout
+        (``{cache_dir}/hub/models/{model_name}``), return that local path.
+
+        Falls back to the original *model_name* (HuggingFace identifier)
+        when no local copy is found.
+        """
+        import os
+        from pathlib import Path
+
+        # Already a local path — nothing to resolve
+        if os.path.isabs(model_name):
+            return model_name
+
+        cache_dir = settings.reranker.modelscope_cache_dir
+        if not cache_dir:
+            return model_name
+
+        local_path = Path(cache_dir) / "hub" / "models" / model_name
+        if local_path.is_dir():
+            logger.info(
+                "Reranker: using local ModelScope cache at {}",
+                local_path,
+            )
+            return str(local_path)
+
+        logger.debug(
+            "Reranker: no local ModelScope cache for {} at {}",
+            model_name,
+            local_path,
+        )
+        return model_name
 
     def _ensure_model(self) -> None:
         """Load the cross-encoder model if it has not been loaded yet.

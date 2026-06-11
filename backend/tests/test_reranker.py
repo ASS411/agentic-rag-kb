@@ -237,7 +237,10 @@ class TestInit:
 
     def test_default_uses_settings(self):
         reranker = Reranker()
-        assert reranker.model_name == "BAAI/bge-reranker-v2-m3"
+        # model_name may be resolved to a local ModelScope cache path,
+        # so we only assert it contains the expected HuggingFace identifier.
+        assert "BAAI" in reranker.model_name
+        assert "bge-reranker-v2-m3" in reranker.model_name
         assert reranker.device == "cpu"
         assert reranker.is_loaded is False
 

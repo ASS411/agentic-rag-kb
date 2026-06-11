@@ -133,6 +133,12 @@ class RerankerSettings(BaseSettings):
         default="cpu",
         description="cpu | cuda",
     )
+    modelscope_cache_dir: str = Field(
+        default="",
+        description="ModelScope local cache directory (e.g. ~/.cache/modelscope). "
+                    "When set, the reranker will prefer a locally cached copy "
+                    "of the model over downloading from HuggingFace.",
+    )
 
     model_config = SettingsConfigDict(env_prefix="RERANKER_", extra="ignore")
 

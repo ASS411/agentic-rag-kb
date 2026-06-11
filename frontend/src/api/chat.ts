@@ -3,17 +3,6 @@ import { parseSseBlock } from '../lib/utils';
 
 const API_BASE = '/api/v1';
 
-// ---------------------------------------------------------------------------
-// SSE streaming chat
-// ---------------------------------------------------------------------------
-
-/**
- * Initiate a streaming RAG chat via POST + ReadableStream SSE.
- *
- * Returns an abort function and an async iterable over events.
- * This avoids a tight coupling between fetch/SSE plumbing and the React
- * component that displays the result.
- */
 export function createChatStream(
   body: ChatRequest,
 ): {
@@ -31,7 +20,7 @@ export function createChatStream(
     });
 
     if (!response.ok || !response.body) {
-      throw new Error(response.statusText || '流式回答连接失败');
+      throw new Error(response.statusText || 'Streaming answer connection failed');
     }
 
     const reader = response.body.getReader();
@@ -52,16 +41,16 @@ export function createChatStream(
           if (event) yield event;
 
           if (event?.type === 'error') {
-            throw new Error(event.content || '生成回答失败');
+            throw new Error(event.content || 'Answer generation failed');
           }
         }
       }
 
-      // Drain remaining buffer
       if (buffer.trim()) {
         const event = parseSseBlock(buffer);
-        if (event && event.type === 'error') {
-          throw new Error(event.content || '生成回答失败');
+        if (event) yield event;
+        if (event?.type === 'error') {
+          throw new Error(event.content || 'Answer generation failed');
         }
       }
     } finally {
@@ -74,10 +63,3 @@ export function createChatStream(
     stream: streamEvents(),
   };
 }
-
-// ---------------------------------------------------------------------------
-// Non-streaming chat (fallback)
-// ---------------------------------------------------------------------------
-
-// Re-use the fetchSearchChunks from documents API; the non-streaming code
-// path in App.tsx can import from there.  This module focuses on SSE.

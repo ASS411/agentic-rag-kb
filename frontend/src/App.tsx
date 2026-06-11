@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import clsx from 'clsx';
 
-import type { ChatMessage, DocumentItem, SearchChunk, UploadState } from './types';
+import type { ChatMessage, DocumentItem, SearchChunk, ThinkingStep, UploadState } from './types';
 import { fetchDocuments, fetchSearchChunks, uploadFile } from './api/documents';
 
 import { Sidebar } from './components/layout/Sidebar';
@@ -11,6 +11,7 @@ import { DocListSection } from './components/upload/DocCard';
 import { WelcomePanel } from './components/qa/WelcomePanel';
 import { AnswerPanel } from './components/qa/AnswerPanel';
 import { QuestionInput } from './components/qa/QuestionInput';
+import { ThinkingPanel } from './components/qa/ThinkingPanel';
 import { SourcePanel } from './components/qa/SourcePanel';
 
 import { useChatStream } from './hooks/useSSE';
@@ -22,35 +23,31 @@ const EXAMPLES = [
 ];
 
 export default function App() {
-  // ── Document state ──────────────────────────────────────────────────
   const [documents, setDocuments] = useState<DocumentItem[]>([]);
   const [docLoading, setDocLoading] = useState(true);
   const [docError, setDocError] = useState('');
 
-  // ── Upload state ────────────────────────────────────────────────────
   const [upload, setUpload] = useState<UploadState>({
     phase: 'idle',
     progress: 0,
     message: '支持 PDF、Markdown、TXT',
   });
 
-  // ── Chat state ──────────────────────────────────────────────────────
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [sources, setSources] = useState<SearchChunk[]>([]);
   const [sourcesNote, setSourcesNote] = useState('');
+  const [thinkingSteps, setThinkingSteps] = useState<ThinkingStep[]>([]);
 
-  // ── UI state ────────────────────────────────────────────────────────
   const [selectedSourceId, setSelectedSourceId] = useState<string | null>(null);
   const [rightOpen, setRightOpen] = useState(true);
+  const [thinkingOpen, setThinkingOpen] = useState(true);
   const bottomRef = useRef<HTMLDivElement | null>(null);
 
-  // ── Derived ─────────────────────────────────────────────────────────
   const readyDocs = useMemo(
     () => documents.filter((doc) => doc.chunk_count > 0).length,
     [documents],
   );
 
-  // ── Document list ───────────────────────────────────────────────────
   const refreshDocuments = useCallback(async () => {
     setDocLoading(true);
     setDocError('');
@@ -68,7 +65,6 @@ export default function App() {
     void refreshDocuments();
   }, [refreshDocuments]);
 
-  // ── Upload handler ──────────────────────────────────────────────────
   const handleFiles = useCallback(
     async (files: FileList | File[]) => {
       const file = Array.from(files)[0];
@@ -96,23 +92,30 @@ export default function App() {
     [refreshDocuments],
   );
 
-  // ── Chat stream hook ────────────────────────────────────────────────
   const chat = useChatStream({
     onStart: (userMsg, assistantMsg) => {
       setMessages((prev) => [...prev, userMsg, assistantMsg]);
       setSources([]);
       setSourcesNote('');
       setSelectedSourceId(null);
+      setThinkingSteps([]);
+      setThinkingOpen(true);
     },
     onToken: (assistantId, token) => {
       setMessages((prev) =>
-        prev.map((m) =>
-          m.id === assistantId ? { ...m, content: m.content + token } : m,
+        prev.map((message) =>
+          message.id === assistantId ? { ...message, content: message.content + token } : message,
         ),
       );
     },
     onSources: (text) => {
       setSourcesNote(text);
+    },
+    onAgentStep: (step) => {
+      setThinkingSteps((prev) => {
+        const next = [...prev, step];
+        return next.length > 20 ? next.slice(-20) : next;
+      });
     },
     onError: (assistantId, message) => {
       setMessages((prev) =>
@@ -125,31 +128,25 @@ export default function App() {
     },
   });
 
-  // Fire a side-channel search to populate the source panel eagerly
   const handleQuestion = useCallback(
     (question: string) => {
-      // Kick off search in parallel
       fetchSearchChunks(question)
         .then(setSources)
         .catch(() => setSources([]));
-      // Start the SSE stream
       void chat.submit(question);
     },
     [chat.submit],
   );
 
-  // ── Scroll to bottom on new messages ────────────────────────────────
   useEffect(() => {
     bottomRef.current?.scrollIntoView({
       behavior: chat.streaming ? 'smooth' : 'auto',
     });
   }, [messages, chat.streaming]);
 
-  // ── Render ──────────────────────────────────────────────────────────
   return (
     <main className="min-h-screen text-slate-100">
       <div className={clsx('workspace-shell', !rightOpen && 'sources-collapsed')}>
-        {/* ── Left sidebar ─────────────────────────────────────────── */}
         <Sidebar>
           <DropZone upload={upload} onFiles={handleFiles} />
           <DocListSection
@@ -160,7 +157,6 @@ export default function App() {
           />
         </Sidebar>
 
-        {/* ── Center conversation ──────────────────────────────────── */}
         <section className="conversation-pane">
           <Header
             docCount={documents.length}
@@ -176,11 +172,14 @@ export default function App() {
                 onSubmitExample={handleQuestion}
               />
             ) : (
-              <AnswerPanel
-                messages={messages}
-                error={chat.error}
-              />
+              <AnswerPanel messages={messages} error={chat.error} />
             )}
+
+            <ThinkingPanel
+              steps={thinkingSteps}
+              expanded={thinkingOpen}
+              onToggle={() => setThinkingOpen((open) => !open)}
+            />
             <div ref={bottomRef} />
           </div>
 
@@ -192,7 +191,6 @@ export default function App() {
           />
         </section>
 
-        {/* ── Right source panel ───────────────────────────────────── */}
         <SourcePanel
           sources={sources}
           selectedSourceId={selectedSourceId}
