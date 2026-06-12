@@ -11,8 +11,8 @@ export function UploadModal({ open, onClose, children }: UploadModalProps) {
   if (!open) return null;
 
   return (
-    <div className="upload-modal-overlay" onClick={onClose}>
-      <div className="upload-modal" onClick={(e) => e.stopPropagation()}>
+    <div className="upload-modal-overlay">
+      <div className="upload-modal">
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-base font-semibold text-foreground">上传文档</h2>
           <button
