@@ -91,7 +91,25 @@ export default function App() {
   // ── New conversation ──────────────────────────────────────────
   const handleNewConversation = useCallback(() => {
     useQAStore.getState().reset();
+    setActiveConversationId(null);
   }, []);
+
+  // ── Load conversation from history ────────────────────────────
+  const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
+  const loadConversation = useCallback(async (conversationId: string) => {
+    const { fetchHistory } = await import('./api/history');
+    const result = await fetchHistory(conversationId);
+    useQAStore.getState().reset();
+    for (const record of result.items) {
+      useQAStore.getState().addMessage({ id: crypto.randomUUID(), role: 'user', content: record.question });
+      useQAStore.getState().addMessage({ id: crypto.randomUUID(), role: 'assistant', content: record.answer });
+      if (record.sources?.length) {
+        useQAStore.getState().setSources(record.sources as any, '');
+      }
+    }
+    setActiveConversationId(conversationId);
+    void qc.invalidateQueries({ queryKey: ['conversations'] });
+  }, [qc]);
 
   // ── Chat stream ───────────────────────────────────────────────
   const chat = useChatStream({
@@ -108,6 +126,7 @@ export default function App() {
     onSources: (text, sourceChunks) => {
       useQAStore.getState().setSources(sourceChunks, text);
       setSourcePanelPinned(true);
+      void qc.invalidateQueries({ queryKey: ['conversations'] });
     },
     onAgentStep: (step) => {
       useQAStore.getState().addThinkingStep(step);
@@ -179,7 +198,13 @@ export default function App() {
           history={
             conversations.length > 0 ? (
               conversations.map((c) => (
-                <button key={c.conversation_id} className="history-item" type="button" title={c.last_question}>
+                <button
+                  key={c.conversation_id}
+                  className={`history-item${activeConversationId === c.conversation_id ? ' active' : ''}`}
+                  type="button"
+                  title={c.last_question}
+                  onClick={() => { void loadConversation(c.conversation_id); }}
+                >
                   {c.title || c.last_question?.slice(0, 40) || '新对话'}
                 </button>
               ))
