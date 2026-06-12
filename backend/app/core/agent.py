@@ -26,6 +26,14 @@ from app.core.prompts import (
 )
 from app.core.prompts import RAGPromptBuilder
 from app.models.search import SearchChunk
+from app.models.sse import (
+    SSEDoneEvent,
+    SSEAnswerDoneEvent,
+    SSEAnswerEvent,
+    SSEErrorEvent,
+    SSEStepEvent,
+    SSESourcesEvent,
+)
 
 
 def _parse_query_list(raw: str, min_expected: int = 1) -> list[str]:
@@ -438,7 +446,6 @@ class AgentLoop:
         """Run the full agent pipeline: rewrite -> search -> rerank -> check
         -> (replan -> search -> ...) -> generate. Yields SSE event strings.
         """
-        import json as _json
         from app.core.retriever import Retriever
         from app.core.reranker import Reranker
 
@@ -447,51 +454,59 @@ class AgentLoop:
         top_k_rerank = settings.agent.top_k_rerank
 
         def _evt(step, message="", **extra):
-            payload = {
-                "type": "agent-step",
-                "step": step,
-                "message": message,
-                "timestamp": datetime.now(timezone.utc).isoformat(),
-            }
-            payload.update(extra)
-            return _json.dumps(payload, ensure_ascii=False)
+            return SSEStepEvent(
+                step=step,
+                message=message,
+                timestamp=datetime.now(timezone.utc).isoformat(),
+                **extra,
+            ).model_dump_json(exclude_none=True)
 
         def _ans(content):
-            return _json.dumps(
-                {
-                    "type": "answer-chunk",
-                    "content": content,
-                    "timestamp": datetime.now(timezone.utc).isoformat(),
-                },
-                ensure_ascii=False,
-            )
+            return SSEAnswerEvent(
+                content=content,
+                timestamp=datetime.now(timezone.utc).isoformat(),
+            ).model_dump_json(exclude_none=True)
 
         def _src(content, ids=None):
-            source_chunks = [
-                chunk.model_dump(mode="json")
-                for chunk in final_chunks
-            ]
-            return _json.dumps({
-                "type": "sources", "content": content,
-                "chunk_ids": ids or [],
-                "source_chunks": source_chunks,
-                "timestamp": datetime.now(timezone.utc).isoformat(),
-            }, ensure_ascii=False)
+            return SSESourcesEvent(
+                content=content,
+                chunk_ids=ids or [],
+                source_chunks=[
+                    chunk.model_dump(mode="json")
+                    for chunk in final_chunks
+                ],
+                timestamp=datetime.now(timezone.utc).isoformat(),
+            ).model_dump_json(exclude_none=True)
 
         def _done():
-            return _json.dumps(
-                {
-                    "type": "answer-done",
-                    "timestamp": datetime.now(timezone.utc).isoformat(),
-                },
-                ensure_ascii=False,
-            )
+            return SSEAnswerDoneEvent(
+                timestamp=datetime.now(timezone.utc).isoformat(),
+            ).model_dump_json(exclude_none=True)
+
+        def _terminal_done():
+            return SSEDoneEvent(
+                content="",
+                conversation_id=None,
+                total_rounds=rounds_completed,
+                chunks_used=len(final_chunks),
+                timestamp=datetime.now(timezone.utc).isoformat(),
+            ).model_dump_json()
+
+        def _error(message: str):
+            return SSEErrorEvent(
+                content=message,
+                timestamp=datetime.now(timezone.utc).isoformat(),
+            ).model_dump_json(exclude_none=True)
 
         # REWRITE
         yield _evt("rewrite", message="Query rewriting")
         queries = await self._rewrite_query(question)
-        yield _evt("rewrite", message=f"{len(queries)} queries generated",
-                    queries=queries, count=len(queries))
+        yield _evt(
+            "rewrite",
+            message=f"{len(queries)} queries generated",
+            queries=queries,
+            count=len(queries),
+        )
 
         context_pool = {}  # chunk_id -> SearchChunk
         top_pool: list[SearchChunk] = []
@@ -500,14 +515,21 @@ class AgentLoop:
         for rnd in range(max_rounds):
             rounds_completed = rnd + 1
             # SEARCH
-            yield _evt("search", message=f"Searching round {rnd+1}",
-                       round=rnd + 1, query_count=len(queries))
+            yield _evt(
+                "search",
+                message=f"Searching round {rnd+1}",
+                round=rnd + 1,
+                query_count=len(queries),
+            )
             retriever = Retriever()
             rr = await retriever.retrieve(
                 queries, top_k_recall=top_k_recall, rerank=False)
-            yield _evt("search", message=f"Retrieved {rr.total_recalled} chunks",
-                       total_recalled=rr.total_recalled,
-                       deduplicated=len(rr.chunks))
+            yield _evt(
+                "search",
+                message=f"Retrieved {rr.total_recalled} chunks",
+                total_recalled=rr.total_recalled,
+                deduplicated=len(rr.chunks),
+            )
 
             for c in rr.chunks:
                 if c.chunk_id not in context_pool or \
@@ -521,34 +543,41 @@ class AgentLoop:
                 break
 
             # RERANK
-            yield _evt("rerank", message=f"Re-ranking {len(candidates)} candidates",
-                       count=len(candidates))
+            yield _evt(
+                "rerank",
+                message=f"Re-ranking {len(candidates)} candidates",
+                count=len(candidates),
+            )
             reranker = Reranker()
             chunk_objs = _sc_to_chunk_batch(candidates)
             reranked = reranker.rerank(
                 question, chunk_objs, top_k=top_k_rerank)
             top_pool = _chunk_to_sc_batch(reranked)
-            yield _evt("rerank", message=f"Top {len(top_pool)} after rerank",
-                       count=len(top_pool))
+            yield _evt(
+                "rerank",
+                message=f"Top {len(top_pool)} after rerank",
+                count=len(top_pool),
+            )
 
             # CHECK
             yield _evt("check", message="Evaluating quality")
             check = await self._quality_check(question, top_pool)
-            yield _evt("check", message="Quality evaluated",
-                       verdict="sufficient" if check.sufficient else "insufficient",
-                       reasoning=check.reasoning,
-                       gap=check.gap)
+            yield _evt(
+                "check",
+                message="Quality evaluated",
+                verdict="sufficient" if check.sufficient else "insufficient",
+                reasoning=check.reasoning,
+                gap=check.gap,
+            )
 
             if check.sufficient:
                 break
 
             if rnd < max_rounds - 1:
                 gap = check.gap or "需要更多信息"
-                yield _evt("replan", message=f"Replanning: {gap[:60]}",
-                           gap=gap)
+                yield _evt("replan", message=f"Replanning: {gap[:60]}", gap=gap)
                 queries = await self._replan(question, gap)
-                yield _evt("replan", message=f"{len(queries)} new queries",
-                           queries=queries)
+                yield _evt("replan", message=f"{len(queries)} new queries", queries=queries)
 
         # GENERATE
         final_chunks = top_pool or sorted(
@@ -568,9 +597,7 @@ class AgentLoop:
             async for token in self._llm.generate_stream(messages):
                 yield _ans(token)
         except LLMError as exc:
-            yield _json.dumps({
-                "type": "error", "content": f"LLM error: {exc}",
-            }, ensure_ascii=False)
+            yield _error(f"LLM error: {exc}")
             return
 
         # SOURCES + DONE
@@ -578,14 +605,4 @@ class AgentLoop:
         chunk_ids = [c.chunk_id for c in final_chunks]
         yield _src(sources_text, chunk_ids)
         yield _done()
-        yield _json.dumps(
-            {
-                "type": "done",
-                "content": "",
-                "conversation_id": None,
-                "total_rounds": rounds_completed,
-                "chunks_used": len(final_chunks),
-                "timestamp": datetime.now(timezone.utc).isoformat(),
-            },
-            ensure_ascii=False,
-        )
+        yield _terminal_done()
