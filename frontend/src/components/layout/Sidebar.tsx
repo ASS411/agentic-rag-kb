@@ -1,4 +1,4 @@
-import { Database, MessageSquare, PanelLeftClose, PanelLeftOpen, Upload } from 'lucide-react';
+import { Database, MessageSquare, PanelLeftClose, PanelLeftOpen, Plus, Upload } from 'lucide-react';
 import type { ReactNode } from 'react';
 import clsx from 'clsx';
 
@@ -12,6 +12,8 @@ export type SidebarProps = {
   history?: ReactNode;
   /** Upload trigger rendered inside sidebar */
   onUploadClick?: () => void;
+  /** New conversation trigger */
+  onNewConversation?: () => void;
 };
 
 export function Sidebar({
@@ -22,6 +24,7 @@ export function Sidebar({
   onMobileClose,
   history,
   onUploadClick,
+  onNewConversation,
 }: SidebarProps) {
   return (
     <>
@@ -89,6 +92,18 @@ export function Sidebar({
         ) : null}
 
         {children}
+
+        {/* New conversation button (visible when expanded) */}
+        {onNewConversation ? (
+          <button
+            className="flex items-center gap-2 w-full px-3 py-2 mb-3 rounded-md text-sm hover:bg-[hsl(var(--popover))] text-[hsl(var(--muted-foreground))] hover:text-[hsl(var(--foreground))] transition-colors"
+            type="button"
+            onClick={onNewConversation}
+          >
+            <Plus size={15} />
+            新建对话
+          </button>
+        ) : null}
 
         {history ? (
           <div className="history-section">

@@ -88,6 +88,11 @@ export default function App() {
   // ── Upload state ──────────────────────────────────────────────
   const [upload, setUpload] = useState<UploadState>({ phase: 'idle', progress: 0, message: '支持 PDF、Markdown、TXT' });
 
+  // ── New conversation ──────────────────────────────────────────
+  const handleNewConversation = useCallback(() => {
+    useQAStore.getState().reset();
+  }, []);
+
   // ── Chat stream ───────────────────────────────────────────────
   const chat = useChatStream({
     onStart: (userMsg, assistantMsg) => {
@@ -170,6 +175,7 @@ export default function App() {
           mobileOpen={mobileSidebarOpen}
           onMobileClose={() => setMobileSidebarOpen(false)}
           onUploadClick={() => setUploadModalOpen(true)}
+          onNewConversation={handleNewConversation}
           history={
             conversations.length > 0 ? (
               conversations.map((c) => (
