@@ -857,3 +857,31 @@ h2 { font-size: 20px; letter-spacing: -0.4px; }
   color: hsl(var(--destructive));
 }
 
+
+/* ── Hide scrollbar but keep scroll ──────────────────────────── */
+
+.source-list {
+  overflow-y: auto;
+  scrollbar-width: none;          /* Firefox */
+  -ms-overflow-style: none;       /* IE/Edge */
+}
+.source-list::-webkit-scrollbar {
+  display: none;                  /* Chrome/Safari */
+}
+
+.message-scroll {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.message-scroll::-webkit-scrollbar {
+  display: none;
+}
+
+.source-pane {
+  overflow-y: auto;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.source-pane::-webkit-scrollbar {
+  display: none;
+}
