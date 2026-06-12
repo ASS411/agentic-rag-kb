@@ -312,8 +312,13 @@ async def delete_document(
     doc_id: str,
     db: AsyncSession = Depends(get_db),
 ) -> APIResponse[str]:
-    """Delete a document — removes MySQL record + uploaded files + Chroma vectors."""
-    # ── Delete from MySQL ────────────────────────────────────────────
+    """Delete a document — removes Chroma vectors + MySQL record + uploaded files.
+
+    Order: Chroma first (idempotent → safe to retry), then MySQL, then
+    filesystem.  If Chroma deletion fails, the MySQL record is kept so
+    startup reconciliation (方案A) can retry on next restart.
+    """
+    # ── Verify document exists ───────────────────────────────────────
     result = await db.execute(
         select(DocumentModel).where(DocumentModel.doc_id == doc_id)
     )
@@ -321,23 +326,26 @@ async def delete_document(
     if record is None:
         raise HTTPException(status_code=404, detail=f"Document not found: {doc_id}")
 
+    # ── 1. Delete from Chroma first (idempotent) ─────────────────────
+    chroma = ChromaStore()
+    deleted_chunks = chroma.delete_by_doc_id(doc_id)
+    logger.info(
+        "Chroma vectors removed: doc_id={}, chunks={}",
+        doc_id,
+        deleted_chunks,
+    )
+
+    # ── 2. Delete from MySQL ─────────────────────────────────────────
     await db.delete(record)
     await db.commit()
 
-    # ── Clean up chunk metadata (belt-and-suspenders: FK CASCADE handles
-    #     this too, but explicit delete is safer across DB engines)
-
-    # ── Delete from Chroma ───────────────────────────────────────────
-    chroma = ChromaStore()
-    deleted_chunks = chroma.delete_by_doc_id(doc_id)
-
-    # ── Delete uploaded files ────────────────────────────────────────
+    # ── 3. Delete uploaded files ─────────────────────────────────────
     storage = get_storage()
     storage.delete(doc_id)
 
     logger.info(
-        "Document deleted: doc_id={}, chroma_chunks_removed={}",
+        "Document fully deleted: doc_id={}, file={}",
         doc_id,
-        deleted_chunks,
+        record.file_name,
     )
     return APIResponse.ok(data=doc_id, message="Document deleted")
