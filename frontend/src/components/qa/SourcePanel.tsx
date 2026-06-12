@@ -1,4 +1,4 @@
-import { ChevronRight, FileSearch } from 'lucide-react';
+import { ChevronLeft, ChevronRight, FileSearch } from 'lucide-react';
 import clsx from 'clsx';
 import type { SearchChunk } from '../../types';
 import { SourceCard } from './SourceCard';
@@ -21,8 +21,21 @@ export function SourcePanel({
   onToggleCollapse,
 }: SourcePanelProps) {
   return (
-    <aside className={clsx('source-pane', !open && 'closed')}>
-      <div className="section-heading">
+    <>
+      {/* Collapsed re-expand bar */}
+      {!open && sources.length > 0 ? (
+        <button
+          type="button"
+          className="fixed right-0 top-1/2 -translate-y-1/2 z-20 w-7 h-20 rounded-l-md bg-card border border-r-0 border-border flex items-center justify-center hover:bg-popover transition-colors"
+          onClick={onToggleCollapse}
+          aria-label="展开来源面板"
+        >
+          <ChevronLeft size={14} className="text-muted-foreground" />
+        </button>
+      ) : null}
+
+      <aside className={clsx('source-pane', !open && 'closed')}>
+        <div className="section-heading">
         <button
           type="button"
           className="mr-1 p-0.5 rounded hover:bg-popover text-muted-foreground"
@@ -62,5 +75,6 @@ export function SourcePanel({
         </div>
       ) : null}
     </aside>
+    </>
   );
 }
