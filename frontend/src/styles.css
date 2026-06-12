@@ -805,3 +805,36 @@ h2 { font-size: 20px; letter-spacing: -0.4px; }
     padding-left: 14px;
   }
 }
+
+/* ── DocCard / error / empty states ──────────────────────────── */
+
+.doc-row {
+  display: grid;
+  grid-template-columns: 24px 1fr;
+  gap: 10px;
+  padding: 10px 0;
+}
+
+.error-strip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px;
+  border-radius: 6px;
+  background: hsl(var(--destructive) / 0.12);
+  color: hsl(var(--destructive));
+  font-size: 13px;
+}
+
+.empty-copy {
+  font-size: 0.82rem;
+  color: hsl(var(--muted-foreground));
+  padding: 8px 0;
+}
+
+.doc-error {
+  display: block;
+  margin-top: 4px;
+  font-size: 12px;
+  color: hsl(var(--destructive));
+}

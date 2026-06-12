@@ -79,8 +79,9 @@ export default function App() {
   const scrollContainerRef = useRef<HTMLDivElement | null>(null);
   const userScrolledUpRef = useRef(false);
 
-  // SourcePanel visible only when sources exist
-  const sourcesVisible = sources.length > 0;
+  // SourcePanel visible only when sources exist AND user hasn't manually hidden it
+  const [sourcePanelPinned, setSourcePanelPinned] = useState(true);
+  const sourcesVisible = sources.length > 0 && sourcePanelPinned;
 
   const readyDocs = useMemo(() => documents.filter(isDocumentReady).length, [documents]);
 
@@ -101,6 +102,7 @@ export default function App() {
     },
     onSources: (text, sourceChunks) => {
       useQAStore.getState().setSources(sourceChunks, text);
+      setSourcePanelPinned(true);
     },
     onAgentStep: (step) => {
       useQAStore.getState().addThinkingStep(step);
@@ -219,7 +221,7 @@ export default function App() {
             hasSources={sources.length > 0}
             onSubmit={handleQuestion}
             onStop={chat.stop}
-            onToggleSourcePanel={() => {}}
+            onToggleSourcePanel={() => setSourcePanelPinned((v) => !v)}
           />
         </section>
 
@@ -240,3 +242,4 @@ export default function App() {
     </main>
   );
 }
+
