@@ -63,7 +63,6 @@ export default function App() {
   const sourcesNote = useQAStore((s) => s.sourcesNote);
   const thinkingSteps = useQAStore((s) => s.thinkingSteps);
   const selectedSourceId = useQAStore((s) => s.selectedSourceId);
-  const thinkingOpen = useQAStore((s) => s.thinkingOpen);
 
   const { scrollToCitation } = useSourceScroll();
   const handleSelectSource = useCallback((chunkId: string | null) => {
@@ -238,8 +237,6 @@ export default function App() {
                 selectedSourceId={selectedSourceId}
                 onSelectSource={handleSelectSource}
                 thinkingSteps={thinkingSteps}
-                thinkingOpen={thinkingOpen}
-                onToggleThinking={() => useQAStore.getState().toggleThinking()}
               />
             )}
             <div ref={bottomRef} />
@@ -272,4 +269,5 @@ export default function App() {
     </main>
   );
 }
+
 

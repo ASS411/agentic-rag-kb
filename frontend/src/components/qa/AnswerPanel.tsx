@@ -1,5 +1,6 @@
-﻿import { AlertTriangle, Loader2, ChevronDown, CircuitBoard } from 'lucide-react';
+import { AlertTriangle, Loader2, ChevronDown, CircuitBoard } from 'lucide-react';
 import clsx from 'clsx';
+import { useState } from 'react';
 import type { ChatMessage, SearchChunk, ThinkingStep } from '../../types';
 import { SourceHighlight } from './SourceHighlight';
 
@@ -10,8 +11,6 @@ export type AnswerPanelProps = {
   selectedSourceId: string | null;
   onSelectSource: (chunkId: string | null) => void;
   thinkingSteps: ThinkingStep[];
-  thinkingOpen: boolean;
-  onToggleThinking: () => void;
 };
 
 function formatStepMsg(step: ThinkingStep): string {
@@ -35,11 +34,10 @@ export function AnswerPanel({
   selectedSourceId,
   onSelectSource,
   thinkingSteps,
-  thinkingOpen,
-  onToggleThinking,
 }: AnswerPanelProps) {
   const hasSources = sources.length > 0;
   const hasThinking = thinkingSteps.length > 0;
+  const [thinkingOpen, setThinkingOpen] = useState(true);
   const lastAssistantIdx = [...messages].reverse().findIndex((m) => m.role === 'assistant');
 
   return (
@@ -70,9 +68,12 @@ export function AnswerPanel({
                 message.content
               )}
 
-              {/* Inline thinking bubble below last assistant message */}
               {isLastAssistant && hasThinking ? (
-                <details className="thinking-inline" open={thinkingOpen} onToggle={onToggleThinking}>
+                <details
+                  className="thinking-inline"
+                  open={thinkingOpen}
+                  onToggle={(e) => setThinkingOpen((e.target as HTMLDetailsElement).open)}
+                >
                   <summary>
                     <CircuitBoard size={13} className="inline mr-1" />
                     思考过程 ({thinkingSteps.length} 步)
