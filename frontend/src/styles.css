@@ -114,6 +114,7 @@ h2 { font-size: 20px; letter-spacing: -0.4px; }
 /* 鈹€鈹€ Upload 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€ */
 
 .upload-target {
+  position: relative;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -126,6 +127,17 @@ h2 { font-size: 20px; letter-spacing: -0.4px; }
   font-size: 14px;
   cursor: pointer;
   transition: border-color 140ms ease, color 140ms ease;
+}
+.upload-input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  cursor: pointer;
+}
+.upload-input:disabled {
+  cursor: not-allowed;
 }
 .upload-target:hover { border-color: hsl(var(--primary)); color: hsl(var(--primary)); }
 .upload-target.success {
@@ -645,7 +657,8 @@ h2 { font-size: 20px; letter-spacing: -0.4px; }
 .brand-icon {
   display: none;
 }
-.sidebar-toggle {
+.sidebar-toggle,
+.sidebar-upload-toggle {
   display: flex;
   align-items: center;
   justify-content: center;
@@ -659,7 +672,8 @@ h2 { font-size: 20px; letter-spacing: -0.4px; }
   margin: 0 auto 12px;
   transition: background 120ms ease, color 120ms ease;
 }
-.sidebar-toggle:hover {
+.sidebar-toggle:hover,
+.sidebar-upload-toggle:hover {
   background: hsl(var(--popover));
   color: hsl(var(--foreground));
 }
@@ -669,6 +683,10 @@ h2 { font-size: 20px; letter-spacing: -0.4px; }
   right: 14px;
   width: 28px;
   height: 28px;
+}
+.upload-target[aria-disabled="true"] {
+  cursor: not-allowed;
+  opacity: 0.7;
 }
 
 /* ── History list ──────────────────────────────────────────────── */

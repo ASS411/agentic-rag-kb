@@ -1,4 +1,4 @@
-import { Database, PanelLeftClose, PanelLeftOpen, Upload, MessageSquare } from 'lucide-react';
+import { Database, MessageSquare, PanelLeftClose, PanelLeftOpen, Upload } from 'lucide-react';
 import type { ReactNode } from 'react';
 import clsx from 'clsx';
 
@@ -25,7 +25,6 @@ export function Sidebar({
 }: SidebarProps) {
   return (
     <>
-      {/* Mobile overlay */}
       {mobileOpen ? (
         <div
           className="fixed inset-0 z-20 bg-black/40 md:hidden"
@@ -40,7 +39,6 @@ export function Sidebar({
           mobileOpen && 'mobile-open',
         )}
       >
-        {/* Collapsed state: brand icon + toggle */}
         <div className="brand-icon">
           <Database size={20} aria-hidden="true" />
         </div>
@@ -58,7 +56,6 @@ export function Sidebar({
           )}
         </button>
 
-        {/* Brand lockup (visible when expanded) */}
         <div className="brand-lockup">
           <div className="brand-mark">
             <Database size={20} aria-hidden="true" />
@@ -69,11 +66,10 @@ export function Sidebar({
           </div>
         </div>
 
-        {/* Upload — icon-only when collapsed, full button when expanded */}
         {onUploadClick ? (
           collapsed ? (
             <button
-              className="sidebar-toggle"
+              className="sidebar-upload-toggle"
               type="button"
               onClick={onUploadClick}
               aria-label="上传文档"
@@ -92,10 +88,8 @@ export function Sidebar({
           )
         ) : null}
 
-        {/* Document list section */}
         {children}
 
-        {/* History list (visible when expanded) */}
         {history ? (
           <div className="history-section">
             <h3>

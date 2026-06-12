@@ -1,5 +1,5 @@
 import { Loader2, UploadCloud } from 'lucide-react';
-import { type ChangeEvent, type DragEvent, useRef } from 'react';
+import { type ChangeEvent, type DragEvent } from 'react';
 import type { UploadState } from '../../types';
 
 export type DropZoneProps = {
@@ -8,7 +8,6 @@ export type DropZoneProps = {
 };
 
 export function DropZone({ upload, onFiles }: DropZoneProps) {
-  const fileInputRef = useRef<HTMLInputElement | null>(null);
   const busy = upload.phase === 'uploading' || upload.phase === 'processing';
 
   const handleDragOver = (event: DragEvent) => {
@@ -17,6 +16,7 @@ export function DropZone({ upload, onFiles }: DropZoneProps) {
 
   const handleDrop = (event: DragEvent) => {
     event.preventDefault();
+    if (busy) return;
     void onFiles(event.dataTransfer.files);
   };
 
@@ -31,19 +31,17 @@ export function DropZone({ upload, onFiles }: DropZoneProps) {
       onDragOver={handleDragOver}
       onDrop={handleDrop}
     >
-      <input
-        ref={fileInputRef}
-        className="sr-only"
-        type="file"
-        accept=".pdf,.md,.markdown,.txt,application/pdf,text/markdown,text/plain"
-        onChange={handleChange}
-      />
-      <button
+      <label
         className="upload-target"
-        type="button"
-        onClick={() => fileInputRef.current?.click()}
-        disabled={busy}
+        aria-disabled={busy}
       >
+        <input
+          className="upload-input"
+          type="file"
+          accept=".pdf,.md,.markdown,.txt,application/pdf,text/markdown,text/plain"
+          onChange={handleChange}
+          disabled={busy}
+        />
         {busy ? (
           <Loader2 className="spin" size={22} aria-hidden="true" />
         ) : (
@@ -51,7 +49,7 @@ export function DropZone({ upload, onFiles }: DropZoneProps) {
         )}
         <span>拖拽文件或点击上传</span>
         <small>{upload.message}</small>
-      </button>
+      </label>
       <div className="progress-track" aria-label="上传进度">
         <span style={{ width: `${upload.progress}%` }} />
       </div>

@@ -19,6 +19,7 @@ export function UploadModal({ open, onClose, children }: UploadModalProps) {
             type="button"
             className="p-1 rounded-md hover:bg-popover text-muted-foreground"
             onClick={onClose}
+            aria-label="关闭上传弹窗"
           >
             <X size={18} />
           </button>
