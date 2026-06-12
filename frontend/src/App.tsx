@@ -1,20 +1,21 @@
 ﻿import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import clsx from 'clsx';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { Menu } from 'lucide-react';
 
 import type { DocumentItem, UploadState } from './types';
 import { fetchDocuments, uploadFile } from './api/documents';
+import { fetchConversations } from './api/history';
 import { useQAStore } from './stores/qaStore';
 import { useSourceScroll } from './hooks/useSourceScroll';
 
 import { Sidebar } from './components/layout/Sidebar';
-import { Header } from './components/layout/Header';
 import { DropZone } from './components/upload/DropZone';
+import { UploadModal } from './components/upload/UploadModal';
 import { DocListSection } from './components/upload/DocCard';
 import { WelcomePanel } from './components/qa/WelcomePanel';
 import { AnswerPanel } from './components/qa/AnswerPanel';
 import { QuestionInput } from './components/qa/QuestionInput';
-import { ThinkingPanel } from './components/qa/ThinkingPanel';
 import { SourcePanel } from './components/qa/SourcePanel';
 
 import { useChatStream } from './hooks/useSSE';
@@ -37,23 +38,26 @@ function isDocumentReady(doc: DocumentItem) {
 }
 
 export default function App() {
-  // ── TanStack Query — documents ────────────────────────────────
-  const {
-    data: documentData,
-    isLoading: docLoading,
-    error: docError,
-    refetch: refreshDocuments,
-  } = useQuery({
+  const qc = useQueryClient();
+
+  // ── Documents (TanStack Query) ────────────────────────────────
+  const { data: documentData, isLoading: docLoading, error: docError, refetch: refreshDocuments } = useQuery({
     queryKey: ['documents'],
     queryFn: fetchDocuments,
     staleTime: 10_000,
   });
-
   const documents: DocumentItem[] = documentData?.items ?? [];
-  const docErrorMsg =
-    docError instanceof Error ? docError.message : '';
+  const docErrorMsg = docError instanceof Error ? docError.message : '';
 
-  // ── Zustand — QA state ───────────────────────────────────────
+  // ── Conversations history ──────────────────────────────────────
+  const { data: convData } = useQuery({
+    queryKey: ['conversations'],
+    queryFn: () => fetchConversations(1, 20),
+    staleTime: 15_000,
+  });
+  const conversations = convData?.items ?? [];
+
+  // ── Zustand QA state ──────────────────────────────────────────
   const messages = useQAStore((s) => s.messages);
   const sources = useQAStore((s) => s.sources);
   const sourcesNote = useQAStore((s) => s.sourcesNote);
@@ -61,35 +65,29 @@ export default function App() {
   const selectedSourceId = useQAStore((s) => s.selectedSourceId);
   const thinkingOpen = useQAStore((s) => s.thinkingOpen);
 
-  // ── useSourceScroll ──────────────────────────────────────────
   const { scrollToCitation } = useSourceScroll();
+  const handleSelectSource = useCallback((chunkId: string | null) => {
+    useQAStore.getState().selectSource(chunkId);
+    scrollToCitation(chunkId);
+  }, [scrollToCitation]);
 
-  const handleSelectSource = useCallback(
-    (chunkId: string | null) => {
-      useQAStore.getState().selectSource(chunkId);
-      scrollToCitation(chunkId);
-    },
-    [scrollToCitation],
-  );
-
-  // ── Upload state (local — transient UI) ─────────────────────
-  const [upload, setUpload] = useState<UploadState>({
-    phase: 'idle',
-    progress: 0,
-    message: '支持 PDF、Markdown、TXT',
-  });
-
-  const [rightOpen, setRightOpen] = useState(true);
+  // ── Layout state ──────────────────────────────────────────────
+  const [sidebarExpanded, setSidebarExpanded] = useState(false);
+  const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
+  const [uploadModalOpen, setUploadModalOpen] = useState(false);
   const bottomRef = useRef<HTMLDivElement | null>(null);
   const scrollContainerRef = useRef<HTMLDivElement | null>(null);
   const userScrolledUpRef = useRef(false);
 
-  const readyDocs = useMemo(
-    () => documents.filter(isDocumentReady).length,
-    [documents],
-  );
+  // SourcePanel visible only when sources exist
+  const sourcesVisible = sources.length > 0;
 
-  // ── Chat stream with qaStore callbacks ───────────────────────
+  const readyDocs = useMemo(() => documents.filter(isDocumentReady).length, [documents]);
+
+  // ── Upload state ──────────────────────────────────────────────
+  const [upload, setUpload] = useState<UploadState>({ phase: 'idle', progress: 0, message: '支持 PDF、Markdown、TXT' });
+
+  // ── Chat stream ───────────────────────────────────────────────
   const chat = useChatStream({
     onStart: (userMsg, assistantMsg) => {
       useQAStore.getState().addMessage(userMsg);
@@ -97,10 +95,6 @@ export default function App() {
       useQAStore.getState().setSources([], '');
       useQAStore.getState().clearThinkingSteps();
       useQAStore.getState().selectSource(null);
-      useQAStore.getState().toggleThinking();
-      if (!useQAStore.getState().thinkingOpen) {
-        useQAStore.getState().toggleThinking();
-      }
     },
     onToken: (assistantId, token) => {
       useQAStore.getState().updateMessage(assistantId, token);
@@ -113,135 +107,97 @@ export default function App() {
     },
     onError: (assistantId, message) => {
       const msgs = useQAStore.getState().messages;
-      const updated = msgs.map((m) =>
-        m.id === assistantId && !m.content
-          ? { ...m, content: `回答生成失败：${message}` }
-          : m,
-      );
-      useQAStore.getState().setMessages(updated);
+      useQAStore.getState().setMessages(msgs.map((m) =>
+        m.id === assistantId && !m.content ? { ...m, content: `回答生成失败：${message}` } : m));
     },
   });
 
-  // ── Upload handler ──────────────────────────────────────────
-  const handleFiles = useCallback(
-    async (files: FileList | File[]) => {
-      const file = Array.from(files)[0];
-      if (!file) return;
+  const handleQuestion = useCallback((q: string) => { void chat.submit(q); }, [chat.submit]);
 
-      setUpload({ phase: 'uploading', progress: 4, message: `正在上传 ${file.name}` });
-      try {
-        const uploaded = await uploadFile(file, (progress) => {
-          setUpload({ phase: 'uploading', progress, message: `正在上传 ${file.name}` });
-        });
-        setUpload({
-          phase: 'processing',
-          progress: 92,
-          message: `${uploaded.file_name} 正在解析并写入索引`,
-        });
-        await refreshDocuments();
-
-        // Poll until the document is ready
-        let processed: DocumentItem | null = null;
-        for (let attempt = 0; attempt < PROCESSING_POLL_MAX_ATTEMPTS; attempt += 1) {
-          await wait(PROCESSING_POLL_INTERVAL_MS);
-          const result = await fetchDocuments();
-          const found = result.items.find((doc) => doc.doc_id === uploaded.doc_id);
-          if (!found) continue;
-          if (found.status === 'error') { processed = found; break; }
-          if (isDocumentReady(found)) { processed = found; break; }
-        }
-
-        if (processed?.status === 'error') {
-          setUpload({
-            phase: 'error', progress: 0,
-            message: processed.error_message || `${processed.file_name} 解析失败`,
-          });
-        } else if (processed) {
-          setUpload({
-            phase: 'success', progress: 100,
-            message: `${processed.file_name} 已就绪，生成 ${processed.chunk_count} 个片段`,
-          });
-        } else {
-          setUpload({
-            phase: 'processing', progress: 96,
-            message: `${uploaded.file_name} 仍在后台处理中，可稍后刷新文档列表`,
-          });
-        }
-      } catch (error) {
-        setUpload({
-          phase: 'error', progress: 0,
-          message: error instanceof Error ? error.message : '上传失败',
-        });
+  // ── Upload handler ────────────────────────────────────────────
+  const handleFiles = useCallback(async (files: FileList | File[]) => {
+    const file = Array.from(files)[0]; if (!file) return;
+    setUpload({ phase: 'uploading', progress: 4, message: `正在上传 ${file.name}` });
+    try {
+      const uploaded = await uploadFile(file, (p) => setUpload({ phase: 'uploading', progress: p, message: `正在上传 ${file.name}` }));
+      setUpload({ phase: 'processing', progress: 92, message: `${uploaded.file_name} 正在解析并写入索引` });
+      await refreshDocuments();
+      let processed: DocumentItem | null = null;
+      for (let i = 0; i < PROCESSING_POLL_MAX_ATTEMPTS; i++) {
+        await wait(PROCESSING_POLL_INTERVAL_MS);
+        const r = await fetchDocuments();
+        const f = r.items.find((d) => d.doc_id === uploaded.doc_id);
+        if (!f) continue;
+        if (f.status === 'error') { processed = f; break; }
+        if (isDocumentReady(f)) { processed = f; break; }
       }
-    },
-    [refreshDocuments],
-  );
+      if (processed?.status === 'error') setUpload({ phase: 'error', progress: 0, message: processed.error_message || `${processed.file_name} 解析失败` });
+      else if (processed) {
+        setUpload({ phase: 'success', progress: 100, message: `${processed.file_name} 已就绪，生成 ${processed.chunk_count} 个片段` });
+        setUploadModalOpen(false);
+        void qc.invalidateQueries({ queryKey: ['documents'] });
+      } else setUpload({ phase: 'processing', progress: 96, message: `${uploaded.file_name} 仍在后台处理中` });
+    } catch (e) { setUpload({ phase: 'error', progress: 0, message: e instanceof Error ? e.message : '上传失败' }); }
+  }, [refreshDocuments, qc]);
 
-  const handleQuestion = useCallback(
-    (question: string) => { void chat.submit(question); },
-    [chat.submit],
-  );
-
-  // ── Smart auto-scroll: only when user is near the bottom ────────
-  // Track manual scroll to detect when the user scrolls up
+  // ── Smart auto-scroll ─────────────────────────────────────────
   useEffect(() => {
-    const container = scrollContainerRef.current;
-    if (!container) return;
-
-    const handleScroll = () => {
-      const { scrollTop, scrollHeight, clientHeight } = container;
-      // User is "at bottom" if within 80px of the true bottom
-      userScrolledUpRef.current =
-        scrollHeight - scrollTop - clientHeight > 80;
-    };
-
-    container.addEventListener('scroll', handleScroll, { passive: true });
-    return () => container.removeEventListener('scroll', handleScroll);
+    const c = scrollContainerRef.current; if (!c) return;
+    const h = () => { userScrolledUpRef.current = c.scrollHeight - c.scrollTop - c.clientHeight > 80; };
+    c.addEventListener('scroll', h, { passive: true });
+    return () => c.removeEventListener('scroll', h);
   }, []);
-
-  // Auto-scroll only when the user hasn't scrolled up
   useEffect(() => {
-    if (!userScrolledUpRef.current) {
-      bottomRef.current?.scrollIntoView({
-        behavior: chat.streaming ? 'smooth' : 'auto',
-      });
-    }
+    if (!userScrolledUpRef.current) bottomRef.current?.scrollIntoView({ behavior: chat.streaming ? 'smooth' : 'auto' });
   }, [messages, chat.streaming]);
+  useEffect(() => { if (chat.streaming) userScrolledUpRef.current = false; }, [chat.streaming]);
 
-  // When a new question starts, reset scroll position and state
-  useEffect(() => {
-    if (chat.streaming) {
-      userScrolledUpRef.current = false;
-    }
-  }, [chat.streaming]);
+  // ── Shell classes ─────────────────────────────────────────────
+  const shellClass = clsx('workspace-shell',
+    sidebarExpanded && 'sidebar-expanded',
+    sourcesVisible && 'sources-visible',
+  );
 
   return (
-    <main className="min-h-screen text-slate-100">
-      <div className={clsx('workspace-shell', !rightOpen && 'sources-collapsed')}>
-        <Sidebar>
+    <main className="min-h-screen text-foreground">
+      <div className={shellClass}>
+        {/* ── Sidebar ──────────────────────────────────── */}
+        <Sidebar
+          collapsed={!sidebarExpanded}
+          onToggle={() => setSidebarExpanded((v) => !v)}
+          mobileOpen={mobileSidebarOpen}
+          onMobileClose={() => setMobileSidebarOpen(false)}
+          onUploadClick={() => setUploadModalOpen(true)}
+          history={
+            conversations.length > 0 ? (
+              conversations.map((c) => (
+                <button key={c.conversation_id} className="history-item" type="button" title={c.last_question}>
+                  {c.title || c.last_question?.slice(0, 40) || '新对话'}
+                </button>
+              ))
+            ) : (
+              <p className="text-xs text-muted-foreground px-2">暂无历史对话</p>
+            )
+          }
+        >
           <DropZone upload={upload} onFiles={handleFiles} />
-          <DocListSection
-            documents={documents}
-            loading={docLoading}
-            error={docErrorMsg}
-            onRefresh={() => { void refreshDocuments(); }}
-          />
+          <DocListSection documents={documents} loading={docLoading} error={docErrorMsg} onRefresh={() => { void refreshDocuments(); }} />
         </Sidebar>
 
+        {/* ── Conversation pane ───────────────────────── */}
         <section className="conversation-pane">
-          <Header
-            docCount={documents.length}
-            readyCount={readyDocs}
-            onToggleSourcePanel={() => setRightOpen((o) => !o)}
-          />
+          {/* Mobile hamburger */}
+          <div className="flex items-center gap-2 px-4 py-2 md:hidden border-b border-[hsl(var(--border))]">
+            <button className="mobile-hamburger" type="button" onClick={() => setMobileSidebarOpen(true)} aria-label="菜单">
+              <Menu size={20} />
+            </button>
+            <span className="text-sm font-semibold text-foreground">证据库</span>
+            <span className="text-xs text-muted-foreground ml-auto">{readyDocs}/{documents.length} 文档</span>
+          </div>
 
           <div className="message-scroll" ref={scrollContainerRef}>
             {messages.length === 0 ? (
-              <WelcomePanel
-                examples={EXAMPLES}
-                streaming={chat.streaming}
-                onSubmitExample={handleQuestion}
-              />
+              <WelcomePanel examples={EXAMPLES} streaming={chat.streaming} onSubmitExample={handleQuestion} />
             ) : (
               <AnswerPanel
                 messages={messages}
@@ -249,36 +205,38 @@ export default function App() {
                 sources={sources}
                 selectedSourceId={selectedSourceId}
                 onSelectSource={handleSelectSource}
+                thinkingSteps={thinkingSteps}
+                thinkingOpen={thinkingOpen}
+                onToggleThinking={() => useQAStore.getState().toggleThinking()}
               />
             )}
-
-            <ThinkingPanel
-              steps={thinkingSteps}
-              expanded={thinkingOpen}
-              onToggle={() => useQAStore.getState().toggleThinking()}
-            />
             <div ref={bottomRef} />
           </div>
 
           <QuestionInput
             streaming={chat.streaming}
             hasDocuments={readyDocs > 0}
+            hasSources={sources.length > 0}
             onSubmit={handleQuestion}
             onStop={chat.stop}
+            onToggleSourcePanel={() => {}}
           />
         </section>
 
+        {/* ── Source panel ─────────────────────────────── */}
         <SourcePanel
           sources={sources}
           selectedSourceId={selectedSourceId}
           sourcesNote={sourcesNote}
-          open={rightOpen}
+          open={sourcesVisible}
           onSelectSource={handleSelectSource}
         />
       </div>
+
+      {/* ── Upload modal ────────────────────────────────── */}
+      <UploadModal open={uploadModalOpen} onClose={() => setUploadModalOpen(false)}>
+        <DropZone upload={upload} onFiles={handleFiles} />
+      </UploadModal>
     </main>
   );
 }
-
-
-
