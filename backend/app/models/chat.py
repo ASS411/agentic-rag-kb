@@ -50,6 +50,13 @@ class ChatRequest(BaseModel):
         default=None,
         description="Reserved for multi-turn conversations (Phase 4+)",
     )
+    max_rounds: int | None = Field(
+        default=None,
+        ge=1,
+        le=10,
+        description="Optional per-request Agent retrieval round limit. "
+                    "Defaults to AGENT_MAX_ROUNDS when omitted.",
+    )
     use_agent: bool = Field(
         default=True,
         description="When True, use the Agent loop (rewrite → search → "

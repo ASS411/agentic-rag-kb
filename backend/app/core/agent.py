@@ -442,14 +442,14 @@ class AgentLoop:
     # Main agent loop (task 5.2)
     # ------------------------------------------------------------------
 
-    async def run(self, question: str):
+    async def run(self, question: str, *, max_rounds: int | None = None):
         """Run the full agent pipeline: rewrite -> search -> rerank -> check
         -> (replan -> search -> ...) -> generate. Yields SSE event strings.
         """
         from app.core.retriever import Retriever
         from app.core.reranker import Reranker
 
-        max_rounds = settings.agent.max_rounds
+        max_rounds = max_rounds or settings.agent.max_rounds
         top_k_recall = settings.agent.top_k_recall
         top_k_rerank = settings.agent.top_k_rerank
 

@@ -67,9 +67,15 @@ export type ThinkingStep = {
   message?: string;
   queries?: string[];
   count?: number;
+  round?: number;
+  query_count?: number;
+  total_recalled?: number;
+  deduplicated?: number;
   verdict?: string;
   reasoning?: string;
   gap?: string;
+  total_rounds?: number;
+  chunks_used?: number;
   timestamp?: string;
 };
 
@@ -79,6 +85,10 @@ export type SSEAgentStepEvent = {
   message?: string;
   queries?: string[];
   count?: number;
+  round?: number;
+  query_count?: number;
+  total_recalled?: number;
+  deduplicated?: number;
   verdict?: string;
   reasoning?: string;
   gap?: string;
@@ -139,6 +149,7 @@ export type ChatRequest = {
   question: string;
   stream?: boolean;
   top_k?: number;
+  max_rounds?: number;
   use_agent?: boolean;
   conversation_id?: string | null;
 };

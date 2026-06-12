@@ -207,11 +207,66 @@ async def _stream_agent_chat(body: ChatRequest):
 
     agent = AgentLoop()
     try:
-        async for event_json in agent.run(body.question):
+        async for event_json in agent.run(
+            body.question,
+            max_rounds=body.max_rounds,
+        ):
             yield f"data: {event_json}\n\n"
     except Exception as exc:
         logger.error("Agent loop error: {}", exc)
         yield _sse_error(f"Agent error: {exc}")
+
+
+async def _non_stream_agent_chat(body: ChatRequest) -> JSONResponse:
+    """Run the agent loop and collapse streamed events into a JSON answer."""
+    from app.core.agent import AgentLoop
+
+    agent = AgentLoop()
+    answer_parts: list[str] = []
+    sources_text = ""
+    source_chunks: list[SearchChunk] = []
+    conversation_id = body.conversation_id
+
+    try:
+        async for event_json in agent.run(
+            body.question,
+            max_rounds=body.max_rounds,
+        ):
+            event = json.loads(event_json)
+            event_type = event.get("type")
+
+            if event_type == "answer-chunk":
+                answer_parts.append(str(event.get("content", "")))
+            elif event_type == "sources":
+                sources_text = str(event.get("content", sources_text))
+                raw_chunks = event.get("source_chunks") or []
+                source_chunks = [
+                    SearchChunk.model_validate(chunk) for chunk in raw_chunks
+                ]
+            elif event_type == "done":
+                conversation_id = event.get("conversation_id", conversation_id)
+            elif event_type == "error":
+                message = str(event.get("content", "Agent error"))
+                return JSONResponse(
+                    status_code=502,
+                    content=APIResponse.error(502, message).model_dump(),
+                )
+    except Exception as exc:
+        logger.error("Agent non-stream error: {}", exc)
+        return JSONResponse(
+            status_code=502,
+            content=APIResponse.error(502, f"Agent error: {exc}").model_dump(),
+        )
+
+    response = ChatResponse(
+        answer="".join(answer_parts),
+        sources=sources_text,
+        source_chunks=source_chunks,
+        question=body.question,
+        conversation_id=conversation_id,
+    )
+
+    return JSONResponse(content=APIResponse.ok(data=response).model_dump())
 
 
 # ---------------------------------------------------------------------------
@@ -286,6 +341,9 @@ async def _non_stream_chat(body: ChatRequest) -> JSONResponse:
 
     Returns the standard ``APIResponse[ChatResponse]`` envelope.
     """
+    if body.use_agent:
+        return await _non_stream_agent_chat(body)
+
     # ── 1. Retrieve chunks ──────────────────────────────────────────
     try:
         chunks = await _retrieve_chunks(body.question, body.top_k)

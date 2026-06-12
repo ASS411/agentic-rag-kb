@@ -47,6 +47,7 @@ export function useChatStream(options: UseChatStreamOptions) {
   });
 
   const abortRef = useRef<{ abort: () => void } | null>(null);
+  const hasAgentStepsRef = useRef(false);
 
   const submit = useCallback(
     async (question: string) => {
@@ -66,6 +67,7 @@ export function useChatStream(options: UseChatStreamOptions) {
       };
 
       setState((prev) => ({ ...prev, streaming: true, error: '', thinkingSteps: [] }));
+      hasAgentStepsRef.current = false;
       onStart(userMessage, assistantMessage);
 
       const { abort, stream } = createChatStream({ question: trimmed });
@@ -81,11 +83,16 @@ export function useChatStream(options: UseChatStreamOptions) {
                 message: event.message,
                 queries: event.queries,
                 count: event.count,
+                round: event.round,
+                query_count: event.query_count,
+                total_recalled: event.total_recalled,
+                deduplicated: event.deduplicated,
                 verdict: event.verdict,
                 reasoning: event.reasoning,
                 gap: event.gap,
                 timestamp: event.timestamp,
               } satisfies ThinkingStep;
+              hasAgentStepsRef.current = true;
               setState((s) => ({
                 ...s,
                 thinkingSteps: [...s.thinkingSteps, step],
@@ -113,9 +120,23 @@ export function useChatStream(options: UseChatStreamOptions) {
               break;
             case 'error':
               throw new Error(event.content || '生成回答失败');
-            case 'done':
-              // terminal — handled by loop exit
+            case 'done': {
+              if (hasAgentStepsRef.current) {
+                const step = {
+                  step: 'done',
+                  message: '回答完成',
+                  total_rounds: event.total_rounds,
+                  chunks_used: event.chunks_used,
+                  timestamp: event.timestamp,
+                } satisfies ThinkingStep;
+                setState((s) => ({
+                  ...s,
+                  thinkingSteps: [...s.thinkingSteps, step],
+                }));
+                onAgentStep?.(step);
+              }
               break;
+            }
           }
         }
       } catch (error) {

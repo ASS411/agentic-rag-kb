@@ -40,6 +40,39 @@ function formatVerdict(verdict?: string) {
   return verdict;
 }
 
+function formatTimestamp(timestamp?: string) {
+  if (!timestamp) return '';
+  const date = new Date(timestamp);
+  if (Number.isNaN(date.getTime())) return timestamp;
+  return date.toLocaleTimeString([], {
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+  });
+}
+
+function getStepMetrics(step: ThinkingStep) {
+  const metrics: string[] = [];
+
+  if (step.round != null) metrics.push(`第 ${step.round} 轮`);
+  if (step.query_count != null) metrics.push(`${step.query_count} 条查询`);
+  if (step.total_recalled != null) metrics.push(`召回 ${step.total_recalled}`);
+  if (step.deduplicated != null) metrics.push(`去重 ${step.deduplicated}`);
+  if (step.count != null) {
+    const label =
+      step.step === 'generate'
+        ? '使用片段'
+        : step.step === 'rewrite' || step.step === 'replan'
+          ? '查询'
+          : '候选';
+    metrics.push(`${label} ${step.count}`);
+  }
+  if (step.total_rounds != null) metrics.push(`共 ${step.total_rounds} 轮`);
+  if (step.chunks_used != null) metrics.push(`引用 ${step.chunks_used} 片段`);
+
+  return metrics;
+}
+
 function StepDot({ active }: { active: boolean }) {
   return <span className={clsx('thinking-dot', active && 'active')} aria-hidden="true" />;
 }
@@ -78,6 +111,7 @@ export function ThinkingPanel({ steps, expanded, onToggle }: ThinkingPanelProps)
             const meta = STEP_META[step.step] ?? STEP_META.generate;
             const Icon = meta.icon;
             const isLatest = index === visibleSteps.length - 1;
+            const metrics = getStepMetrics(step);
 
             return (
               <li className={clsx('thinking-step', isLatest && 'latest')} key={`${step.step}-${index}`}>
@@ -88,7 +122,9 @@ export function ThinkingPanel({ steps, expanded, onToggle }: ThinkingPanelProps)
                       <Icon size={14} aria-hidden="true" />
                       {meta.label}
                     </span>
-                    {step.timestamp ? <span className="thinking-step-time">{step.timestamp}</span> : null}
+                    {step.timestamp ? (
+                      <span className="thinking-step-time">{formatTimestamp(step.timestamp)}</span>
+                    ) : null}
                   </div>
 
                   {step.message ? <p className="thinking-step-msg">{step.message}</p> : null}
@@ -104,9 +140,11 @@ export function ThinkingPanel({ steps, expanded, onToggle }: ThinkingPanelProps)
                   ) : null}
 
                   <div className="thinking-metrics">
-                    {step.count != null ? (
-                      <span className="thinking-metric">{step.count} 条结果</span>
-                    ) : null}
+                    {metrics.map((metric) => (
+                      <span className="thinking-metric" key={metric}>
+                        {metric}
+                      </span>
+                    ))}
                     {step.verdict ? (
                       <span className={clsx('thinking-verdict', step.verdict)}>
                         {formatVerdict(step.verdict)}

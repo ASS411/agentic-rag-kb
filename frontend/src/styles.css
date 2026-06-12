@@ -269,6 +269,10 @@ h1 {
   font-size: 12px;
 }
 
+.thinking-step-time {
+  white-space: nowrap;
+}
+
 .doc-meta {
   display: flex;
   flex-wrap: wrap;
@@ -783,10 +787,19 @@ h1 {
 }
 
 .thinking-collapsed-label {
+  flex: 0 0 auto;
   gap: 8px;
   color: #e8edf2;
   font-size: 12px;
   font-weight: 720;
+}
+
+.thinking-collapsed-copy {
+  min-width: 0;
+  overflow: hidden;
+  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .thinking-step {
@@ -860,10 +873,23 @@ h1 {
   border-radius: 999px;
   color: #dfe8ef;
   font-size: 12px;
+  line-height: 1.45;
+}
+
+.thinking-chip,
+.thinking-gap,
+.thinking-reasoning {
+  max-width: 100%;
+  height: auto;
+  padding-top: 5px;
+  padding-bottom: 5px;
+  overflow-wrap: anywhere;
+  white-space: normal;
 }
 
 .thinking-metrics {
   display: flex;
+  align-items: flex-start;
   flex-wrap: wrap;
   gap: 6px;
   margin-top: 10px;

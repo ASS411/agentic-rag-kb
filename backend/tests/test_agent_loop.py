@@ -146,6 +146,38 @@ class TestAgentLoopRun:
         assert "replan" in steps
 
     @pytest.mark.asyncio
+    async def test_request_max_rounds_limits_replan(self, monkeypatch):
+        """A per-request max_rounds override should cap the search loop."""
+        _mock_retriever(monkeypatch)
+        _mock_reranker(monkeypatch)
+
+        agent = _make_patched_agent()
+        agent._llm.generate.return_value = '["q1"]'
+
+        async def _fake_check(question, context_pool, **kw):
+            from app.core.agent import CheckResult
+            return CheckResult(
+                sufficient=False,
+                reasoning="missing",
+                gap="缺少信息",
+            )
+
+        agent._quality_check = _fake_check
+
+        import json
+
+        events = [json.loads(evt) async for evt in agent.run("test?", max_rounds=1)]
+        steps = [
+            event["step"]
+            for event in events
+            if event.get("type") == "agent-step"
+        ]
+        done_evt = next(event for event in events if event["type"] == "done")
+
+        assert "replan" not in steps
+        assert done_evt["total_rounds"] == 1
+
+    @pytest.mark.asyncio
     async def test_generates_answer_chunks(self, monkeypatch):
         """The stream should contain answer-chunk events before done."""
         _mock_retriever(monkeypatch)

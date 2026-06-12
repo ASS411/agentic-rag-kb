@@ -47,7 +47,7 @@ class TestNonStreamChat:
 
                 response = client.post(
                     "/api/v1/chat",
-                    json={"question": "test", "stream": False},
+                    json={"question": "test", "stream": False, "use_agent": False},
                 )
 
                 assert response.status_code == 200
@@ -82,7 +82,7 @@ class TestNonStreamChat:
 
                 response = client.post(
                     "/api/v1/chat",
-                    json={"question": "test", "stream": False},
+                    json={"question": "test", "stream": False, "use_agent": False},
                 )
 
                 assert response.status_code == 502
@@ -98,11 +98,110 @@ class TestNonStreamChat:
 
                 response = client.post(
                     "/api/v1/chat",
-                    json={"question": "test", "stream": False},
+                    json={"question": "test", "stream": False, "use_agent": False},
                 )
 
                 assert response.status_code == 200
                 assert response.json()["data"]["sources"] != ""
+
+    def test_agent_non_stream_returns_json_response(self):
+        source_chunk = _source_chunk().model_dump(mode="json")
+
+        async def _fake_run(*args, **kwargs):
+            yield json.dumps({
+                "type": "answer-chunk",
+                "content": "hello ",
+                "timestamp": "2026-01-01T00:00:00+00:00",
+            })
+            yield json.dumps({
+                "type": "answer-chunk",
+                "content": "world",
+                "timestamp": "2026-01-01T00:00:00+00:00",
+            })
+            yield json.dumps({
+                "type": "sources",
+                "content": "1. source",
+                "source_chunks": [source_chunk],
+                "chunk_ids": ["chunk_1"],
+                "timestamp": "2026-01-01T00:00:00+00:00",
+            })
+            yield json.dumps({
+                "type": "done",
+                "content": "",
+                "conversation_id": None,
+                "total_rounds": 1,
+                "chunks_used": 1,
+                "timestamp": "2026-01-01T00:00:00+00:00",
+            })
+
+        with patch("app.core.agent.AgentLoop") as mock_agent_class:
+            mock_agent = MagicMock()
+            mock_agent.run = MagicMock(return_value=_fake_run())
+            mock_agent_class.return_value = mock_agent
+
+            response = client.post(
+                "/api/v1/chat",
+                json={"question": "agent json", "stream": False, "use_agent": True},
+            )
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["success"] is True
+        assert body["data"]["answer"] == "hello world"
+        assert body["data"]["sources"] == "1. source"
+        assert body["data"]["source_chunks"][0]["chunk_id"] == "chunk_1"
+
+    def test_agent_non_stream_error_event_returns_502(self):
+        async def _fake_run(*args, **kwargs):
+            yield json.dumps({
+                "type": "error",
+                "content": "Agent boom",
+                "timestamp": "2026-01-01T00:00:00+00:00",
+            })
+
+        with patch("app.core.agent.AgentLoop") as mock_agent_class:
+            mock_agent = MagicMock()
+            mock_agent.run = MagicMock(return_value=_fake_run())
+            mock_agent_class.return_value = mock_agent
+
+            response = client.post(
+                "/api/v1/chat",
+                json={"question": "agent json", "stream": False, "use_agent": True},
+            )
+
+        assert response.status_code == 502
+        body = response.json()
+        assert body["success"] is False
+        assert "Agent boom" in body["message"]
+
+    def test_agent_non_stream_passes_request_max_rounds(self):
+        async def _fake_run(*args, **kwargs):
+            yield json.dumps({
+                "type": "done",
+                "content": "",
+                "conversation_id": None,
+                "total_rounds": 2,
+                "chunks_used": 0,
+                "timestamp": "2026-01-01T00:00:00+00:00",
+            })
+
+        with patch("app.core.agent.AgentLoop") as mock_agent_class:
+            mock_agent = MagicMock()
+            mock_agent.run = MagicMock(return_value=_fake_run())
+            mock_agent_class.return_value = mock_agent
+
+            response = client.post(
+                "/api/v1/chat",
+                json={
+                    "question": "agent json",
+                    "stream": False,
+                    "use_agent": True,
+                    "max_rounds": 2,
+                },
+            )
+
+        assert response.status_code == 200
+        mock_agent.run.assert_called_once_with("agent json", max_rounds=2)
 
 
 # ---------------------------------------------------------------------------
@@ -301,6 +400,23 @@ class TestChatRequestValidation:
 
                 response = client.post(
                     "/api/v1/chat",
-                    json={"question": "valid", "stream": False, "top_k": 10},
+                    json={
+                        "question": "valid",
+                        "stream": False,
+                        "top_k": 10,
+                        "use_agent": False,
+                    },
                 )
                 assert response.status_code == 200
+
+    def test_invalid_max_rounds_returns_422(self):
+        response = client.post(
+            "/api/v1/chat",
+            json={
+                "question": "valid",
+                "stream": False,
+                "use_agent": True,
+                "max_rounds": 0,
+            },
+        )
+        assert response.status_code == 422
