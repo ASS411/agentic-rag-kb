@@ -452,6 +452,8 @@ class AgentLoop:
         max_rounds = max_rounds or settings.agent.max_rounds
         top_k_recall = settings.agent.top_k_recall
         top_k_rerank = settings.agent.top_k_rerank
+        retriever = Retriever()
+        reranker = Reranker()
 
         def _evt(step, message="", **extra):
             return SSEStepEvent(
@@ -521,7 +523,6 @@ class AgentLoop:
                 round=rnd + 1,
                 query_count=len(queries),
             )
-            retriever = Retriever()
             rr = await retriever.retrieve(
                 queries, top_k_recall=top_k_recall, rerank=False)
             yield _evt(
@@ -548,7 +549,6 @@ class AgentLoop:
                 message=f"Re-ranking {len(candidates)} candidates",
                 count=len(candidates),
             )
-            reranker = Reranker()
             chunk_objs = _sc_to_chunk_batch(candidates)
             reranked = reranker.rerank(
                 question, chunk_objs, top_k=top_k_rerank)

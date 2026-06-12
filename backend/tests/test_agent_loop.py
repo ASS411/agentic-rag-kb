@@ -76,6 +76,27 @@ def _mock_reranker(monkeypatch, top_k=3):
     monkeypatch.setattr(rnk_mod, "Reranker", FakeReranker)
 
 
+def _mock_counting_reranker(monkeypatch, top_k=3):
+    """Patch Reranker and return a call counter for lifecycle tests."""
+    from app.core import reranker as rnk_mod
+
+    counter = {"instances": 0, "rerank_calls": 0}
+
+    class FakeReranker:
+        def __init__(self, *args, **kwargs):
+            counter["instances"] += 1
+
+        def rerank(self, question, chunks, top_k=top_k):
+            counter["rerank_calls"] += 1
+            result = chunks[-top_k:]
+            for idx, c in enumerate(result):
+                c.metadata["rerank_score"] = 0.9 - idx * 0.1
+            return result
+
+    monkeypatch.setattr(rnk_mod, "Reranker", FakeReranker)
+    return counter
+
+
 class TestAgentLoopRun:
     @pytest.mark.asyncio
     async def test_emits_rewrite_step_first(self):
@@ -176,6 +197,31 @@ class TestAgentLoopRun:
 
         assert "replan" not in steps
         assert done_evt["total_rounds"] == 1
+
+    @pytest.mark.asyncio
+    async def test_reranker_instance_reused_across_agent_rounds(self, monkeypatch):
+        """The expensive reranker wrapper should be created once per run."""
+        _mock_retriever(monkeypatch)
+        counter = _mock_counting_reranker(monkeypatch)
+
+        agent = _make_patched_agent()
+        agent._llm.generate.return_value = '["q1"]'
+
+        async def _fake_check(question, context_pool, **kw):
+            from app.core.agent import CheckResult
+            return CheckResult(
+                sufficient=False,
+                reasoning="missing",
+                gap="缺少信息",
+            )
+
+        agent._quality_check = _fake_check
+
+        events = [evt async for evt in agent.run("test?", max_rounds=2)]
+
+        assert events
+        assert counter["instances"] == 1
+        assert counter["rerank_calls"] == 2
 
     @pytest.mark.asyncio
     async def test_generates_answer_chunks(self, monkeypatch):
