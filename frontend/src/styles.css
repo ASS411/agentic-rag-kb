@@ -565,37 +565,43 @@ h1 {
   color: #7d8d9b;
 }
 
-/* ── Citation markers ───────────────────────────────────────────── */
+
+/* ── Citation chips ─────────────────────────────────────────────── */
 
 .source-highlight {
   cursor: default;
+  line-height: 1.75;
 }
 
-.citation-marker {
-  display: inline-block;
-  padding: 1px 6px;
-  margin: 0 2px;
-  border-radius: 4px;
+.citation-chip {
+  display: inline;
+  padding: 1px 5px;
+  margin: 0 1px;
+  border-radius: 3px;
   background: rgba(103, 171, 255, 0.15);
   color: #8ec7ff;
-  font-size: 0.82em;
-  font-weight: 600;
+  font-size: 0.78em;
+  font-weight: 700;
+  font-family: inherit;
   cursor: pointer;
   user-select: none;
-  transition: background 120ms ease, color 120ms ease;
+  transition: background 120ms ease, color 120ms ease, box-shadow 120ms ease;
   border: 1px solid transparent;
+  vertical-align: baseline;
+  white-space: nowrap;
 }
 
-.citation-marker:hover {
-  background: rgba(103, 171, 255, 0.28);
-  border-color: rgba(103, 171, 255, 0.4);
+.citation-chip:hover {
+  background: rgba(103, 171, 255, 0.3);
+  border-color: rgba(103, 171, 255, 0.45);
+  color: #b8daff;
 }
 
-.citation-marker.selected {
-  background: rgba(103, 171, 255, 0.35);
+.citation-chip.selected {
+  background: rgba(103, 171, 255, 0.38);
   border-color: #67abff;
   color: #fff;
-  box-shadow: 0 0 0 2px rgba(103, 171, 255, 0.25);
+  box-shadow: 0 0 0 2px rgba(103, 171, 255, 0.28);
 }
 
 
@@ -1064,6 +1070,8 @@ h1 {
   100% { box-shadow: 0 0 0 0 rgba(103, 171, 255, 0); }
 }
 
-.citation-marker.flash {
+.citation-chip.flash {
   animation: citation-flash 0.6s ease;
 }
+
+

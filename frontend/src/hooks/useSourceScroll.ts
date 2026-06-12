@@ -21,7 +21,7 @@ export function useSourceScroll() {
     if (!chunkId) return;
 
     // Find the citation marker that references this source
-    const markers = document.querySelectorAll('.citation-marker');
+    const markers = document.querySelectorAll('.citation-chip');
     for (const marker of markers) {
       const el = marker as HTMLElement;
       const idxStr = el.dataset.sourceIndex;
@@ -72,3 +72,4 @@ export function useSourceScroll() {
 
   return { selectedSourceId, scrollToCitation, scrollToSource };
 }
+

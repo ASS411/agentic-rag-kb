@@ -11,43 +11,44 @@ export type SourceHighlightProps = {
   onHoverSource?: (chunkId: string | null) => void;
 };
 
-/**
- * Detect citation markers in text and wrap them in interactive <mark> elements.
- *
- * Matches [来源 N], [来源N], [chunk_N], [chunk N] variants.
- * Uses 1-based indexing (N starts at 1, maps to sources[N-1]).
- */
-function highlightCitations(
-  text: string,
-  sourcesCount: number,
-): string {
-  if (!text || sourcesCount === 0) return text;
+/** Regex matching [来源 N] / [chunk_N] / [chunk N] with optional separators. */
+const CITATION_RE = /\[(?:来源|chunk)[ _-]?(\d+)\]/gi;
 
-  // Match all citation formats
-  const pattern = /\[(?:来源|chunk)[ _-]?(\d+)\]/gi;
+type Segment =
+  | { kind: 'text'; value: string }
+  | { kind: 'citation'; sourceIdx: number; label: string };
 
-  return text.replace(pattern, (_match, digits) => {
-    const index = parseInt(digits, 10);
-    if (index < 1 || index > sourcesCount) {
-      return _match; // out of range — leave unchanged
+function splitText(text: string, sourcesCount: number): Segment[] {
+  const segments: Segment[] = [];
+  let last = 0;
+  let match: RegExpExecArray | null;
+
+  // Reset regex state
+  CITATION_RE.lastIndex = 0;
+  while ((match = CITATION_RE.exec(text)) !== null) {
+    const idx = parseInt(match[1], 10);
+    const before = text.slice(last, match.index);
+    if (before) segments.push({ kind: 'text', value: before });
+
+    if (idx >= 1 && idx <= sourcesCount) {
+      segments.push({
+        kind: 'citation',
+        sourceIdx: idx - 1,
+        label: match[0],
+      });
+    } else {
+      // Out of range — keep as plain text
+      segments.push({ kind: 'text', value: match[0] });
     }
-    return (
-      '<mark class="citation-marker" ' +
-      `data-source-index="${index - 1}" ` +
-      `data-citation="${_match}">` +
-      `&#91;来源 ${index}&#93;` +
-      '</mark>'
-    );
-  });
+    last = match.index + match[0].length;
+  }
+
+  const tail = text.slice(last);
+  if (tail) segments.push({ kind: 'text', value: tail });
+
+  return segments;
 }
 
-/**
- * Renders answer markdown with interactive citation markers.
- *
- * Citation patterns like `[来源 1]` are rendered as clickable
- * <mark> elements.  Clicking one selects the corresponding source
- * card; hovering highlights it.
- */
 export function SourceHighlight({
   content,
   sources,
@@ -57,21 +58,11 @@ export function SourceHighlight({
 }: SourceHighlightProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
 
-  const processed = highlightCitations(content, sources.length);
-
-  const handleClick = useCallback(
-    (e: React.MouseEvent) => {
-      const target = e.target as HTMLElement;
-      const marker = target.closest?.('.citation-marker') as HTMLElement | null;
-      if (!marker) return;
-
-      const index = marker.dataset.sourceIndex;
-      if (index == null) return;
-
-      const source = sources[parseInt(index, 10)];
+  // Also apply selected marker styling via a side effect
+  const handleSelect = useCallback(
+    (sourceIdx: number) => {
+      const source = sources[sourceIdx];
       if (!source) return;
-
-      // Toggle: clicking an already-selected marker deselects it
       onSelectSource(
         source.chunk_id === selectedSourceId ? null : source.chunk_id,
       );
@@ -79,59 +70,60 @@ export function SourceHighlight({
     [sources, selectedSourceId, onSelectSource],
   );
 
-  const handleMouseOver = useCallback(
-    (e: React.MouseEvent) => {
-      const target = e.target as HTMLElement;
-      const marker = target.closest?.('.citation-marker') as HTMLElement | null;
-      if (!marker) return;
-
-      const index = marker.dataset.sourceIndex;
-      if (index == null) return;
-
-      const source = sources[parseInt(index, 10)];
-      if (source && onHoverSource) {
-        onHoverSource(source.chunk_id);
-      }
-    },
-    [sources, onHoverSource],
-  );
-
-  const handleMouseOut = useCallback(
-    (e: React.MouseEvent) => {
-      const target = e.target as HTMLElement;
-      const marker = target.closest?.('.citation-marker') as HTMLElement | null;
-      if (!marker) return;
-      if (onHoverSource) onHoverSource(null);
-    },
-    [onHoverSource],
-  );
-
-  // Style the selected marker
-  if (selectedSourceId && containerRef.current) {
-    const idx = sources.findIndex((s) => s.chunk_id === selectedSourceId);
-    const markers = containerRef.current.querySelectorAll('.citation-marker');
-    markers.forEach((m) => {
-      const el = m as HTMLElement;
-      const i = parseInt(el.dataset.sourceIndex ?? '', 10);
-      el.classList.toggle('selected', i === idx);
-    });
-  }
-
-  return (
-    <div
-      ref={containerRef}
-      className="source-highlight"
-      onClick={handleClick}
-      onMouseOver={handleMouseOver}
-      onMouseOut={handleMouseOut}
-    >
+  if (!content || sources.length === 0) {
+    return (
       <ReactMarkdown
         className="message-markdown"
         remarkPlugins={[remarkGfm]}
         rehypePlugins={[rehypeHighlight]}
       >
-        {processed}
+        {content}
       </ReactMarkdown>
+    );
+  }
+
+  const segments = splitText(content, sources.length);
+
+  return (
+    <div ref={containerRef} className="source-highlight message-markdown">
+      {segments.map((seg, i) => {
+        if (seg.kind === 'citation') {
+          const source = sources[seg.sourceIdx];
+          const isSelected = source?.chunk_id === selectedSourceId;
+          return (
+            <button
+              key={i}
+              type="button"
+              className={`citation-chip${isSelected ? ' selected' : ''}`}
+              data-source-index={seg.sourceIdx}
+              title={source ? `${source.doc_name ?? ''} 第${source.page ?? '?'}页` : ''}
+              onClick={() => handleSelect(seg.sourceIdx)}
+              onMouseEnter={() => {
+                if (source && onHoverSource) onHoverSource(source.chunk_id);
+              }}
+              onMouseLeave={() => {
+                if (onHoverSource) onHoverSource(null);
+              }}
+            >
+              [{seg.sourceIdx + 1}]
+            </button>
+          );
+        }
+        // Text segment — render as markdown
+        return (
+          <ReactMarkdown
+            key={i}
+            remarkPlugins={[remarkGfm]}
+            rehypePlugins={[rehypeHighlight]}
+            components={{
+              // Keep inline rendering
+              p: ({ children, ...props }) => <span {...props}>{children}</span>,
+            }}
+          >
+            {seg.value}
+          </ReactMarkdown>
+        );
+      })}
     </div>
   );
 }
