@@ -3,7 +3,7 @@
 .workspace-shell {
   display: grid;
   grid-template-columns: 48px minmax(0, 1fr) 0;
-  min-height: 100vh;
+  height: 100vh;
   transition: grid-template-columns 200ms ease;
 }
 .workspace-shell.sidebar-expanded {
@@ -18,7 +18,7 @@
 .conversation-pane {
   display: flex;
   flex-direction: column;
-  min-height: 100vh;
+  height: 100vh;
   max-height: 100vh;
   overflow: hidden;
 }
@@ -619,7 +619,7 @@ h2 { font-size: 20px; letter-spacing: -0.4px; }
 @media (max-width: 820px) {
   .workspace-shell { display: block; }
   .left-rail { border-right: 0; border-bottom: 1px solid hsl(var(--border)); }
-  .conversation-pane { max-height: none; min-height: 100vh; }
+  .conversation-pane { max-height: none; height: 100vh; }
   .topbar, .question-dock { padding-right: 18px; padding-left: 18px; }
   .topbar { align-items: flex-start; flex-direction: column; }
   .status-pills { justify-content: flex-start; }
@@ -856,3 +856,4 @@ h2 { font-size: 20px; letter-spacing: -0.4px; }
   font-size: 12px;
   color: hsl(var(--destructive));
 }
+

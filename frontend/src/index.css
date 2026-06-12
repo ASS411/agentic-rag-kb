@@ -1,4 +1,4 @@
-@tailwind base;
+﻿@tailwind base;
 @tailwind components;
 @tailwind utilities;
 
@@ -21,7 +21,8 @@
     box-sizing: border-box;
   }
 
-  body {
+  html, body { overflow: hidden; }
+body {
     margin: 0;
     min-width: 320px;
     font-family:
@@ -44,3 +45,4 @@
     cursor: not-allowed;
   }
 }
+
