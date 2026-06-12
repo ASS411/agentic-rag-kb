@@ -81,6 +81,8 @@ export default function App() {
 
   const [rightOpen, setRightOpen] = useState(true);
   const bottomRef = useRef<HTMLDivElement | null>(null);
+  const scrollContainerRef = useRef<HTMLDivElement | null>(null);
+  const userScrolledUpRef = useRef(false);
 
   const readyDocs = useMemo(
     () => documents.filter(isDocumentReady).length,
@@ -180,11 +182,38 @@ export default function App() {
     [chat.submit],
   );
 
+  // ── Smart auto-scroll: only when user is near the bottom ────────
+  // Track manual scroll to detect when the user scrolls up
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({
-      behavior: chat.streaming ? 'smooth' : 'auto',
-    });
+    const container = scrollContainerRef.current;
+    if (!container) return;
+
+    const handleScroll = () => {
+      const { scrollTop, scrollHeight, clientHeight } = container;
+      // User is "at bottom" if within 80px of the true bottom
+      userScrolledUpRef.current =
+        scrollHeight - scrollTop - clientHeight > 80;
+    };
+
+    container.addEventListener('scroll', handleScroll, { passive: true });
+    return () => container.removeEventListener('scroll', handleScroll);
+  }, []);
+
+  // Auto-scroll only when the user hasn't scrolled up
+  useEffect(() => {
+    if (!userScrolledUpRef.current) {
+      bottomRef.current?.scrollIntoView({
+        behavior: chat.streaming ? 'smooth' : 'auto',
+      });
+    }
   }, [messages, chat.streaming]);
+
+  // When a new question starts, reset scroll position and state
+  useEffect(() => {
+    if (chat.streaming) {
+      userScrolledUpRef.current = false;
+    }
+  }, [chat.streaming]);
 
   return (
     <main className="min-h-screen text-slate-100">
@@ -206,7 +235,7 @@ export default function App() {
             onToggleSourcePanel={() => setRightOpen((o) => !o)}
           />
 
-          <div className="message-scroll">
+          <div className="message-scroll" ref={scrollContainerRef}>
             {messages.length === 0 ? (
               <WelcomePanel
                 examples={EXAMPLES}
