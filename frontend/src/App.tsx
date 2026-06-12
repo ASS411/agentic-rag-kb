@@ -226,7 +226,13 @@ export default function App() {
                 onSubmitExample={handleQuestion}
               />
             ) : (
-              <AnswerPanel messages={messages} error={chat.error} />
+              <AnswerPanel
+                messages={messages}
+                error={chat.error}
+                sources={sources}
+                selectedSourceId={selectedSourceId}
+                onSelectSource={setSelectedSourceId}
+              />
             )}
 
             <ThinkingPanel

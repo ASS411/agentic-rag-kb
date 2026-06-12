@@ -1,4 +1,4 @@
-@tailwind base;
+﻿@tailwind base;
 @tailwind components;
 @tailwind utilities;
 
@@ -565,6 +565,40 @@ h1 {
   color: #7d8d9b;
 }
 
+/* ── Citation markers ───────────────────────────────────────────── */
+
+.source-highlight {
+  cursor: default;
+}
+
+.citation-marker {
+  display: inline-block;
+  padding: 1px 6px;
+  margin: 0 2px;
+  border-radius: 4px;
+  background: rgba(103, 171, 255, 0.15);
+  color: #8ec7ff;
+  font-size: 0.82em;
+  font-weight: 600;
+  cursor: pointer;
+  user-select: none;
+  transition: background 120ms ease, color 120ms ease;
+  border: 1px solid transparent;
+}
+
+.citation-marker:hover {
+  background: rgba(103, 171, 255, 0.28);
+  border-color: rgba(103, 171, 255, 0.4);
+}
+
+.citation-marker.selected {
+  background: rgba(103, 171, 255, 0.35);
+  border-color: #67abff;
+  color: #fff;
+  box-shadow: 0 0 0 2px rgba(103, 171, 255, 0.25);
+}
+
+
 .typing {
   gap: 8px;
   color: #93a6b8;
@@ -1021,3 +1055,4 @@ h1 {
     flex-direction: column;
   }
 }
+

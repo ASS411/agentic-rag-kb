@@ -1,16 +1,25 @@
 import { AlertTriangle, Loader2 } from 'lucide-react';
 import clsx from 'clsx';
-import ReactMarkdown from 'react-markdown';
-import rehypeHighlight from 'rehype-highlight';
-import remarkGfm from 'remark-gfm';
-import type { ChatMessage } from '../../types';
+import type { ChatMessage, SearchChunk } from '../../types';
+import { SourceHighlight } from './SourceHighlight';
 
 export type AnswerPanelProps = {
   messages: ChatMessage[];
   error: string;
+  sources: SearchChunk[];
+  selectedSourceId: string | null;
+  onSelectSource: (chunkId: string | null) => void;
 };
 
-export function AnswerPanel({ messages, error }: AnswerPanelProps) {
+export function AnswerPanel({
+  messages,
+  error,
+  sources,
+  selectedSourceId,
+  onSelectSource,
+}: AnswerPanelProps) {
+  const hasSources = sources.length > 0;
+
   return (
     <>
       {messages.map((message) => (
@@ -25,13 +34,21 @@ export function AnswerPanel({ messages, error }: AnswerPanelProps) {
                 正在生成回答
               </span>
             ) : message.role === 'assistant' ? (
-              <ReactMarkdown
-                className="message-markdown"
-                remarkPlugins={[remarkGfm]}
-                rehypePlugins={[rehypeHighlight]}
-              >
-                {message.content}
-              </ReactMarkdown>
+              hasSources ? (
+                <SourceHighlight
+                  content={message.content}
+                  sources={sources}
+                  selectedSourceId={selectedSourceId}
+                  onSelectSource={onSelectSource}
+                />
+              ) : (
+                <SourceHighlight
+                  content={message.content}
+                  sources={[]}
+                  selectedSourceId={null}
+                  onSelectSource={() => {}}
+                />
+              )
             ) : (
               message.content
             )}
