@@ -99,12 +99,21 @@ export default function App() {
     const { fetchHistory } = await import('./api/history');
     const result = await fetchHistory(conversationId);
     useQAStore.getState().reset();
-    for (const record of result.items) {
+    // API returns newest first — reverse for chronological order
+    const records = [...result.items].reverse();
+    let lastSources: any[] = [];
+    for (const record of records) {
       useQAStore.getState().addMessage({ id: crypto.randomUUID(), role: 'user', content: record.question });
       useQAStore.getState().addMessage({ id: crypto.randomUUID(), role: 'assistant', content: record.answer });
       if (record.sources?.length) {
-        useQAStore.getState().setSources(record.sources as any, '');
+        lastSources = record.sources;
       }
+    }
+    // Set sources from the last record that had them
+    if (lastSources.length > 0) {
+      // Map stored sources (content_snippet) to SearchChunk shape (content)
+      const mapped = lastSources.map((s: any) => ({ ...s, content: s.content_snippet || '', doc_type: s.doc_type || 'pdf' }));
+      useQAStore.getState().setSources(mapped as any, '');
     }
     setActiveConversationId(conversationId);
     void qc.invalidateQueries({ queryKey: ['conversations'] });
