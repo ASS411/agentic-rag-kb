@@ -182,7 +182,6 @@ export default function App() {
             )
           }
         >
-          <DropZone upload={upload} onFiles={handleFiles} />
           <DocListSection documents={documents} loading={docLoading} error={docErrorMsg} onRefresh={() => { void refreshDocuments(); }} />
         </Sidebar>
 
