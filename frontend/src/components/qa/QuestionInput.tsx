@@ -1,5 +1,6 @@
 import { Send } from 'lucide-react';
 import { type FormEvent, type KeyboardEvent, useCallback, useState } from 'react';
+import { Button } from '@/components/ui/button';
 
 export type QuestionInputProps = {
   streaming: boolean;
@@ -52,14 +53,14 @@ export function QuestionInput({
         rows={1}
       />
       {streaming ? (
-        <button className="send-button stop" type="button" onClick={onStop}>
+        <Button variant="destructive" type="button" onClick={onStop}>
           停止
-        </button>
+        </Button>
       ) : (
-        <button className="send-button" type="submit" disabled={!value.trim()}>
+        <Button variant="primary" type="submit" disabled={!value.trim()}>
           <Send size={17} aria-hidden="true" />
           发送
-        </button>
+        </Button>
       )}
     </form>
   );

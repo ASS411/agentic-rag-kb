@@ -1,4 +1,5 @@
 import { AlertTriangle, CheckCircle2, FileText, Loader2, RefreshCw } from 'lucide-react';
+import { Button } from '@/components/ui/button';
 import type { DocumentItem } from '../../types';
 import { formatBytes, compactDate } from '../../lib/utils';
 
@@ -68,14 +69,15 @@ export function DocListSection({ documents, loading, error, onRefresh }: DocList
     <section className="rail-section">
       <div className="section-heading">
         <span>文档列表</span>
-        <button
-          className="icon-button"
+        <Button
+          variant="ghost"
+          size="icon"
           type="button"
           onClick={() => void onRefresh()}
           aria-label="刷新文档列表"
         >
           <RefreshCw size={16} aria-hidden="true" />
-        </button>
+        </Button>
       </div>
 
       {loading ? (

@@ -1,4 +1,5 @@
 import { CheckCircle2, PanelRight, Search } from 'lucide-react';
+import { Button } from '@/components/ui/button';
 
 export type HeaderProps = {
   docCount: number;
@@ -22,14 +23,15 @@ export function Header({ docCount, readyCount, onToggleSourcePanel }: HeaderProp
           <Search size={15} aria-hidden="true" />
           {readyCount} 已索引
         </span>
-        <button
-          className="icon-button"
+        <Button
+          variant="ghost"
+          size="icon"
           type="button"
           onClick={onToggleSourcePanel}
           aria-label="切换来源面板"
         >
           <PanelRight size={17} aria-hidden="true" />
-        </button>
+        </Button>
       </div>
     </header>
   );
