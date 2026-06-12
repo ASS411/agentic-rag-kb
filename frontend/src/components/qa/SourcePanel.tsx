@@ -1,4 +1,4 @@
-import { FileSearch } from 'lucide-react';
+import { ChevronRight, FileSearch } from 'lucide-react';
 import clsx from 'clsx';
 import type { SearchChunk } from '../../types';
 import { SourceCard } from './SourceCard';
@@ -9,6 +9,7 @@ export type SourcePanelProps = {
   sourcesNote: string;
   open: boolean;
   onSelectSource: (chunkId: string | null) => void;
+  onToggleCollapse: () => void;
 };
 
 export function SourcePanel({
@@ -17,10 +18,19 @@ export function SourcePanel({
   sourcesNote,
   open,
   onSelectSource,
+  onToggleCollapse,
 }: SourcePanelProps) {
   return (
     <aside className={clsx('source-pane', !open && 'closed')}>
       <div className="section-heading">
+        <button
+          type="button"
+          className="mr-1 p-0.5 rounded hover:bg-popover text-muted-foreground"
+          onClick={onToggleCollapse}
+          aria-label="折叠来源面板"
+        >
+          <ChevronRight size={16} />
+        </button>
         <span>来源</span>
         <small>{sources.length ? `${sources.length} 引用片段` : '等待回答来源'}</small>
       </div>

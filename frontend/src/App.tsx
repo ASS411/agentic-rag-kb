@@ -268,6 +268,7 @@ export default function App() {
           sourcesNote={sourcesNote}
           open={sourcesVisible}
           onSelectSource={handleSelectSource}
+          onToggleCollapse={() => setSourcePanelPinned((v) => !v)}
         />
       </div>
 
@@ -278,5 +279,6 @@ export default function App() {
     </main>
   );
 }
+
 
 
