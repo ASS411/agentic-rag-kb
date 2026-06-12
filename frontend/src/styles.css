@@ -1056,3 +1056,14 @@ h1 {
   }
 }
 
+/* ── Citation flash animation for useSourceScroll ─────────────── */
+
+@keyframes citation-flash {
+  0% { box-shadow: 0 0 0 0 rgba(103, 171, 255, 0.5); }
+  50% { box-shadow: 0 0 0 6px rgba(103, 171, 255, 0.2); }
+  100% { box-shadow: 0 0 0 0 rgba(103, 171, 255, 0); }
+}
+
+.citation-marker.flash {
+  animation: citation-flash 0.6s ease;
+}

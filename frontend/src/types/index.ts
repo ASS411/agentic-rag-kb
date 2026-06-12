@@ -1,4 +1,4 @@
-export type ApiEnvelope<T> = {
+﻿export type ApiEnvelope<T> = {
   success: boolean;
   code: number;
   message: string;
@@ -168,4 +168,14 @@ export type UploadState = {
   phase: UploadPhase;
   progress: number;
   message: string;
+};
+
+/** Citation parsed from the answer — aligned with backend Citation model. */
+export type CitationItem = {
+  chunk_id: string;
+  doc_name: string;
+  page: number;
+  content_snippet: string;
+  score: number;
+  reference_label: string;
 };

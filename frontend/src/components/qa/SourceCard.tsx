@@ -16,6 +16,7 @@ export function SourceCard({ source, index, selected, onSelect }: SourceCardProp
     <button
       className={clsx('source-card', selected && 'selected')}
       type="button"
+      data-chunk-id={source.chunk_id}
       onClick={() => onSelect(source.chunk_id)}
     >
       <span

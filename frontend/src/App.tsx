@@ -1,8 +1,11 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+﻿import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import clsx from 'clsx';
+import { useQuery } from '@tanstack/react-query';
 
-import type { ChatMessage, DocumentItem, SearchChunk, ThinkingStep, UploadState } from './types';
+import type { DocumentItem, UploadState } from './types';
 import { fetchDocuments, uploadFile } from './api/documents';
+import { useQAStore } from './stores/qaStore';
+import { useSourceScroll } from './hooks/useSourceScroll';
 
 import { Sidebar } from './components/layout/Sidebar';
 import { Header } from './components/layout/Header';
@@ -34,24 +37,49 @@ function isDocumentReady(doc: DocumentItem) {
 }
 
 export default function App() {
-  const [documents, setDocuments] = useState<DocumentItem[]>([]);
-  const [docLoading, setDocLoading] = useState(true);
-  const [docError, setDocError] = useState('');
+  // ── TanStack Query — documents ────────────────────────────────
+  const {
+    data: documentData,
+    isLoading: docLoading,
+    error: docError,
+    refetch: refreshDocuments,
+  } = useQuery({
+    queryKey: ['documents'],
+    queryFn: fetchDocuments,
+    staleTime: 10_000,
+  });
 
+  const documents: DocumentItem[] = documentData?.items ?? [];
+  const docErrorMsg =
+    docError instanceof Error ? docError.message : '';
+
+  // ── Zustand — QA state ───────────────────────────────────────
+  const messages = useQAStore((s) => s.messages);
+  const sources = useQAStore((s) => s.sources);
+  const sourcesNote = useQAStore((s) => s.sourcesNote);
+  const thinkingSteps = useQAStore((s) => s.thinkingSteps);
+  const selectedSourceId = useQAStore((s) => s.selectedSourceId);
+  const thinkingOpen = useQAStore((s) => s.thinkingOpen);
+
+  // ── useSourceScroll ──────────────────────────────────────────
+  const { scrollToCitation } = useSourceScroll();
+
+  const handleSelectSource = useCallback(
+    (chunkId: string | null) => {
+      useQAStore.getState().selectSource(chunkId);
+      scrollToCitation(chunkId);
+    },
+    [scrollToCitation],
+  );
+
+  // ── Upload state (local — transient UI) ─────────────────────
   const [upload, setUpload] = useState<UploadState>({
     phase: 'idle',
     progress: 0,
     message: '支持 PDF、Markdown、TXT',
   });
 
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const [sources, setSources] = useState<SearchChunk[]>([]);
-  const [sourcesNote, setSourcesNote] = useState('');
-  const [thinkingSteps, setThinkingSteps] = useState<ThinkingStep[]>([]);
-
-  const [selectedSourceId, setSelectedSourceId] = useState<string | null>(null);
   const [rightOpen, setRightOpen] = useState(true);
-  const [thinkingOpen, setThinkingOpen] = useState(true);
   const bottomRef = useRef<HTMLDivElement | null>(null);
 
   const readyDocs = useMemo(
@@ -59,42 +87,40 @@ export default function App() {
     [documents],
   );
 
-  const refreshDocuments = useCallback(async () => {
-    setDocLoading(true);
-    setDocError('');
-    try {
-      const result = await fetchDocuments();
-      setDocuments(result.items);
-      return result.items;
-    } catch (error) {
-      setDocError(error instanceof Error ? error.message : '文档列表加载失败');
-      return [];
-    } finally {
-      setDocLoading(false);
-    }
-  }, []);
-
-  const waitForDocumentProcessing = useCallback(
-    async (docId: string) => {
-      for (let attempt = 0; attempt < PROCESSING_POLL_MAX_ATTEMPTS; attempt += 1) {
-        await wait(PROCESSING_POLL_INTERVAL_MS);
-        const latest = await refreshDocuments();
-        const uploadedDoc = latest.find((doc) => doc.doc_id === docId);
-
-        if (!uploadedDoc) continue;
-        if (uploadedDoc.status === 'error') return uploadedDoc;
-        if (isDocumentReady(uploadedDoc)) return uploadedDoc;
+  // ── Chat stream with qaStore callbacks ───────────────────────
+  const chat = useChatStream({
+    onStart: (userMsg, assistantMsg) => {
+      useQAStore.getState().addMessage(userMsg);
+      useQAStore.getState().addMessage(assistantMsg);
+      useQAStore.getState().setSources([], '');
+      useQAStore.getState().clearThinkingSteps();
+      useQAStore.getState().selectSource(null);
+      useQAStore.getState().toggleThinking();
+      if (!useQAStore.getState().thinkingOpen) {
+        useQAStore.getState().toggleThinking();
       }
-
-      return null;
     },
-    [refreshDocuments],
-  );
+    onToken: (assistantId, token) => {
+      useQAStore.getState().updateMessage(assistantId, token);
+    },
+    onSources: (text, sourceChunks) => {
+      useQAStore.getState().setSources(sourceChunks, text);
+    },
+    onAgentStep: (step) => {
+      useQAStore.getState().addThinkingStep(step);
+    },
+    onError: (assistantId, message) => {
+      const msgs = useQAStore.getState().messages;
+      const updated = msgs.map((m) =>
+        m.id === assistantId && !m.content
+          ? { ...m, content: `回答生成失败：${message}` }
+          : m,
+      );
+      useQAStore.getState().setMessages(updated);
+    },
+  });
 
-  useEffect(() => {
-    void refreshDocuments();
-  }, [refreshDocuments]);
-
+  // ── Upload handler ──────────────────────────────────────────
   const handleFiles = useCallback(
     async (files: FileList | File[]) => {
       const file = Array.from(files)[0];
@@ -111,84 +137,46 @@ export default function App() {
           message: `${uploaded.file_name} 正在解析并写入索引`,
         });
         await refreshDocuments();
-        const processed = await waitForDocumentProcessing(uploaded.doc_id);
+
+        // Poll until the document is ready
+        let processed: DocumentItem | null = null;
+        for (let attempt = 0; attempt < PROCESSING_POLL_MAX_ATTEMPTS; attempt += 1) {
+          await wait(PROCESSING_POLL_INTERVAL_MS);
+          const result = await fetchDocuments();
+          const found = result.items.find((doc) => doc.doc_id === uploaded.doc_id);
+          if (!found) continue;
+          if (found.status === 'error') { processed = found; break; }
+          if (isDocumentReady(found)) { processed = found; break; }
+        }
 
         if (processed?.status === 'error') {
           setUpload({
-            phase: 'error',
-            progress: 0,
+            phase: 'error', progress: 0,
             message: processed.error_message || `${processed.file_name} 解析失败`,
           });
-          return;
-        }
-
-        if (processed) {
+        } else if (processed) {
           setUpload({
-            phase: 'success',
-            progress: 100,
+            phase: 'success', progress: 100,
             message: `${processed.file_name} 已就绪，生成 ${processed.chunk_count} 个片段`,
           });
-          return;
+        } else {
+          setUpload({
+            phase: 'processing', progress: 96,
+            message: `${uploaded.file_name} 仍在后台处理中，可稍后刷新文档列表`,
+          });
         }
-
-        setUpload({
-          phase: 'processing',
-          progress: 96,
-          message: `${uploaded.file_name} 仍在后台处理中，可稍后刷新文档列表`,
-        });
       } catch (error) {
         setUpload({
-          phase: 'error',
-          progress: 0,
+          phase: 'error', progress: 0,
           message: error instanceof Error ? error.message : '上传失败',
         });
       }
     },
-    [refreshDocuments, waitForDocumentProcessing],
+    [refreshDocuments],
   );
 
-  const chat = useChatStream({
-    onStart: (userMsg, assistantMsg) => {
-      setMessages((prev) => [...prev, userMsg, assistantMsg]);
-      setSources([]);
-      setSourcesNote('');
-      setSelectedSourceId(null);
-      setThinkingSteps([]);
-      setThinkingOpen(true);
-    },
-    onToken: (assistantId, token) => {
-      setMessages((prev) =>
-        prev.map((message) =>
-          message.id === assistantId ? { ...message, content: message.content + token } : message,
-        ),
-      );
-    },
-    onSources: (text, sourceChunks) => {
-      setSourcesNote(text);
-      setSources(sourceChunks);
-      setSelectedSourceId(sourceChunks[0]?.chunk_id ?? null);
-    },
-    onAgentStep: (step) => {
-      setThinkingSteps((prev) => {
-        const next = [...prev, step];
-        return next.length > 20 ? next.slice(-20) : next;
-      });
-    },
-    onError: (assistantId, message) => {
-      setMessages((prev) =>
-        prev.map((m) =>
-          m.id === assistantId && !m.content
-            ? { ...m, content: `回答生成失败：${message}` }
-            : m,
-        ),
-      );
-    },
-  });
-
   const handleQuestion = useCallback(
-    (question: string) => {
-      void chat.submit(question);
-    },
+    (question: string) => { void chat.submit(question); },
     [chat.submit],
   );
 
@@ -206,8 +194,8 @@ export default function App() {
           <DocListSection
             documents={documents}
             loading={docLoading}
-            error={docError}
-            onRefresh={refreshDocuments}
+            error={docErrorMsg}
+            onRefresh={() => { void refreshDocuments(); }}
           />
         </Sidebar>
 
@@ -231,14 +219,14 @@ export default function App() {
                 error={chat.error}
                 sources={sources}
                 selectedSourceId={selectedSourceId}
-                onSelectSource={setSelectedSourceId}
+                onSelectSource={handleSelectSource}
               />
             )}
 
             <ThinkingPanel
               steps={thinkingSteps}
               expanded={thinkingOpen}
-              onToggle={() => setThinkingOpen((open) => !open)}
+              onToggle={() => useQAStore.getState().toggleThinking()}
             />
             <div ref={bottomRef} />
           </div>
@@ -256,9 +244,12 @@ export default function App() {
           selectedSourceId={selectedSourceId}
           sourcesNote={sourcesNote}
           open={rightOpen}
-          onSelectSource={setSelectedSourceId}
+          onSelectSource={handleSelectSource}
         />
       </div>
     </main>
   );
 }
+
+
+
