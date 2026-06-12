@@ -69,16 +69,27 @@ export function Sidebar({
           </div>
         </div>
 
-        {/* Upload button (visible when expanded) */}
+        {/* Upload — icon-only when collapsed, full button when expanded */}
         {onUploadClick ? (
-          <button
-            className="flex items-center gap-2 w-full px-3 py-2 mt-2 rounded-md text-sm border border-dashed border-[hsl(var(--border))] text-[hsl(var(--muted-foreground))] hover:bg-[hsl(var(--popover))] hover:text-[hsl(var(--foreground))] transition-colors"
-            type="button"
-            onClick={onUploadClick}
-          >
-            <Upload size={15} />
-            上传文档
-          </button>
+          collapsed ? (
+            <button
+              className="sidebar-toggle"
+              type="button"
+              onClick={onUploadClick}
+              aria-label="上传文档"
+            >
+              <Upload size={18} />
+            </button>
+          ) : (
+            <button
+              className="flex items-center gap-2 w-full px-3 py-2 mt-2 rounded-md text-sm border border-dashed border-[hsl(var(--border))] text-[hsl(var(--muted-foreground))] hover:bg-[hsl(var(--popover))] hover:text-[hsl(var(--foreground))] transition-colors"
+              type="button"
+              onClick={onUploadClick}
+            >
+              <Upload size={15} />
+              上传文档
+            </button>
+          )
         ) : null}
 
         {/* Document list section */}
