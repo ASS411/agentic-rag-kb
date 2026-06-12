@@ -303,8 +303,10 @@ async def _stream_chat(body: ChatRequest) -> AsyncGenerator[str, None]:
 
     # ── 3. Stream tokens ────────────────────────────────────────────
     llm = LLMClient()
+    full_answer_parts: list[str] = []
     try:
         async for token in llm.generate_stream(messages):
+            full_answer_parts.append(token)
             yield _sse_event("token", token)
     except LLMStreamError as exc:
         logger.error("Chat stream LLM error: {}", exc)
@@ -315,7 +317,23 @@ async def _stream_chat(body: ChatRequest) -> AsyncGenerator[str, None]:
         yield _sse_error(f"LLM error: {exc}")
         return
 
-    # ── 4. Send sources + done ──────────────────────────────────────
+    # ── 4. Persist to history ───────────────────────────────────────
+    full_answer = "".join(full_answer_parts)
+    conv_id = body.conversation_id
+    if full_answer.strip():
+        try:
+            from app.core.history_store import save_qa_record
+            conv_id = await save_qa_record(
+                conversation_id=body.conversation_id,
+                question=body.question,
+                answer=full_answer,
+                source_chunks=chunks,
+                total_rounds=1,
+            )
+        except Exception as exc:
+            logger.warning("Failed to save QA stream record: {}", exc)
+
+    # ── 5. Send sources + done ──────────────────────────────────────
     yield _sse_event(
         "sources",
         sources_text,
@@ -325,7 +343,7 @@ async def _stream_chat(body: ChatRequest) -> AsyncGenerator[str, None]:
     yield _sse_event(
         "done",
         "",
-        conversation_id=body.conversation_id,
+        conversation_id=conv_id,
         total_rounds=1,
         chunks_used=len(chunks),
     )
@@ -375,12 +393,26 @@ async def _non_stream_chat(body: ChatRequest) -> JSONResponse:
             content=APIResponse.error(502, f"LLM error: {exc}").model_dump(),
         )
 
+    # ── 4. Persist to history ───────────────────────────────────────
+    try:
+        from app.core.history_store import save_qa_record
+        conv_id = await save_qa_record(
+            conversation_id=body.conversation_id,
+            question=body.question,
+            answer=answer,
+            source_chunks=chunks,
+            total_rounds=1,
+        )
+    except Exception as exc:
+        logger.warning("Failed to save QA record: {}", exc)
+        conv_id = body.conversation_id
+
     response = ChatResponse(
         answer=answer,
         sources=sources_text,
         source_chunks=chunks,
         question=body.question,
-        conversation_id=body.conversation_id,
+        conversation_id=conv_id,
     )
 
     logger.info(
