@@ -198,23 +198,50 @@ async def chat(
 
 
 async def _stream_agent_chat(body: ChatRequest):
-    """Run the agent loop and yield SSE events.
-
-    Delegates to ``AgentLoop.run()`` which yields JSON event strings.
-    Each string is wrapped as an SSE ``data:`` line.
-    """
+    """Run the agent loop and yield SSE events. Saves history on completion."""
     from app.core.agent import AgentLoop
 
     agent = AgentLoop()
+    answer_parts: list[str] = []
+    source_chunks: list[SearchChunk] = []
+    total_rounds = 0
+    conversation_id = body.conversation_id
+
     try:
         async for event_json in agent.run(
             body.question,
             max_rounds=body.max_rounds,
         ):
             yield f"data: {event_json}\n\n"
+            event = json.loads(event_json)
+            et = event.get("type")
+            if et == "answer-chunk":
+                answer_parts.append(str(event.get("content", "")))
+            elif et == "sources":
+                raw = event.get("source_chunks") or []
+                source_chunks = [SearchChunk.model_validate(c) for c in raw]
+            elif et == "done":
+                total_rounds = int(event.get("total_rounds", 0))
+                conversation_id = event.get("conversation_id", conversation_id)
     except Exception as exc:
         logger.error("Agent loop error: {}", exc)
         yield _sse_error(f"Agent error: {exc}")
+        return
+
+    # Persist to history
+    full_answer = "".join(answer_parts)
+    if full_answer.strip():
+        try:
+            from app.core.history_store import save_qa_record
+            await save_qa_record(
+                conversation_id=conversation_id,
+                question=body.question,
+                answer=full_answer,
+                source_chunks=source_chunks,
+                total_rounds=total_rounds,
+            )
+        except Exception as exc:
+            logger.warning("Failed to save agent QA record: {}", exc)
 
 
 async def _non_stream_agent_chat(body: ChatRequest) -> JSONResponse:
@@ -257,6 +284,20 @@ async def _non_stream_agent_chat(body: ChatRequest) -> JSONResponse:
             status_code=502,
             content=APIResponse.error(502, f"Agent error: {exc}").model_dump(),
         )
+
+    # Persist to history
+    full_answer = "".join(answer_parts)
+    if full_answer.strip():
+        try:
+            from app.core.history_store import save_qa_record
+            conversation_id = await save_qa_record(
+                conversation_id=conversation_id,
+                question=body.question,
+                answer=full_answer,
+                source_chunks=source_chunks,
+            )
+        except Exception as exc:
+            logger.warning("Failed to save agent QA record: {}", exc)
 
     response = ChatResponse(
         answer="".join(answer_parts),
