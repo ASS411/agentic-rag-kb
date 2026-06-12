@@ -134,7 +134,12 @@ export default function App() {
     onSources: (text, sourceChunks) => {
       useQAStore.getState().setSources(sourceChunks, text);
       setSourcePanelPinned(true);
-      void qc.invalidateQueries({ queryKey: ['conversations'] });
+    },
+    onDone: () => {
+      // Delay refresh — backend saves history AFTER stream completes
+      setTimeout(() => {
+        void qc.invalidateQueries({ queryKey: ['conversations'] });
+      }, 1500);
     },
     onAgentStep: (step) => {
       useQAStore.getState().addThinkingStep(step);
