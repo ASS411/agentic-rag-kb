@@ -885,3 +885,8 @@ h2 { font-size: 20px; letter-spacing: -0.4px; }
 .source-pane::-webkit-scrollbar {
   display: none;
 }
+
+.upload-target:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}

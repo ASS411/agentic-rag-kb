@@ -1,5 +1,5 @@
 import { Loader2, UploadCloud } from 'lucide-react';
-import { type ChangeEvent, type DragEvent } from 'react';
+import { type ChangeEvent, type DragEvent, useRef } from 'react';
 import type { UploadState } from '../../types';
 
 export type DropZoneProps = {
@@ -8,7 +8,12 @@ export type DropZoneProps = {
 };
 
 export function DropZone({ upload, onFiles }: DropZoneProps) {
+  const fileRef = useRef<HTMLInputElement | null>(null);
   const busy = upload.phase === 'uploading' || upload.phase === 'processing';
+
+  const openFilePicker = () => {
+    if (!busy) fileRef.current?.click();
+  };
 
   const handleDragOver = (event: DragEvent) => {
     event.preventDefault();
@@ -21,8 +26,10 @@ export function DropZone({ upload, onFiles }: DropZoneProps) {
   };
 
   const handleChange = (event: ChangeEvent<HTMLInputElement>) => {
-    if (event.target.files) void onFiles(event.target.files);
-    event.currentTarget.value = '';
+    if (event.target.files && event.target.files.length > 0) {
+      void onFiles(event.target.files);
+      event.target.value = '';
+    }
   };
 
   return (
@@ -31,17 +38,20 @@ export function DropZone({ upload, onFiles }: DropZoneProps) {
       onDragOver={handleDragOver}
       onDrop={handleDrop}
     >
-      <label
+      <input
+        ref={fileRef}
+        className="upload-input"
+        type="file"
+        accept=".pdf,.md,.markdown,.txt,application/pdf,text/markdown,text/plain"
+        onChange={handleChange}
+        disabled={busy}
+      />
+      <button
         className="upload-target"
-        aria-disabled={busy}
+        type="button"
+        onClick={openFilePicker}
+        disabled={busy}
       >
-        <input
-          className="upload-input"
-          type="file"
-          accept=".pdf,.md,.markdown,.txt,application/pdf,text/markdown,text/plain"
-          onChange={handleChange}
-          disabled={busy}
-        />
         {busy ? (
           <Loader2 className="spin" size={22} aria-hidden="true" />
         ) : (
@@ -49,7 +59,7 @@ export function DropZone({ upload, onFiles }: DropZoneProps) {
         )}
         <span>拖拽文件或点击上传</span>
         <small>{upload.message}</small>
-      </label>
+      </button>
       <div className="progress-track" aria-label="上传进度">
         <span style={{ width: `${upload.progress}%` }} />
       </div>
