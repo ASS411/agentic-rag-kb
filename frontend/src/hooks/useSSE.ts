@@ -140,7 +140,9 @@ export function useChatStream(options: UseChatStreamOptions) {
           }
         }
       } catch (error) {
-        if (!(error instanceof DOMException && error.name === 'AbortError')) {
+        if (error instanceof DOMException && error.name === 'AbortError') {
+          onError?.(assistantId, '已停止生成');
+        } else {
           const message = error instanceof Error ? error.message : '生成回答失败';
           setState((s) => ({ ...s, error: message }));
           onError?.(assistantId, message);
