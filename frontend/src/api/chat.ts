@@ -12,7 +12,7 @@ export function createChatStream(
   const controller = new AbortController();
 
   async function* streamEvents(): AsyncIterable<StreamEvent> {
-    const response = await fetch(`${API_BASE}/chat`, {
+    const response = await fetch(`${API_BASE}/qa/ask`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ ...body, stream: true }),

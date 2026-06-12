@@ -39,7 +39,7 @@ from app.models.sse import (
     SSEDoneEvent,
 )
 
-router = APIRouter(prefix="/chat", tags=["chat"])
+router = APIRouter(prefix="/qa", tags=["qa"])
 
 
 # ---------------------------------------------------------------------------
@@ -112,7 +112,7 @@ async def _retrieve_chunks(
 # ---------------------------------------------------------------------------
 
 
-@router.post("", response_model=None)
+@router.post("/ask", response_model=None)
 async def chat(
     body: ChatRequest,
 ):
