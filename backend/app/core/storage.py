@@ -102,3 +102,55 @@ def get_storage() -> FileStorage:
     if _storage is None:
         _storage = FileStorage()
     return _storage
+
+
+# ── Chroma-MySQL reconciliation ────────────────────────────────────────────
+
+
+async def reconcile_chroma() -> int:
+    """Remove Chroma chunks whose ``doc_id`` is not in MySQL.
+
+    Called at startup to clean up stale data left behind by manual
+    deletions, incomplete rollbacks, or previous run remnants.
+
+    Returns the number of chunks removed.
+    """
+    from app.db.chroma import ChromaStore
+    from app.db.mysql import async_session_factory
+    from app.models.document import DocumentModel
+    from sqlalchemy import select
+
+    from loguru import logger
+
+    # Collect valid doc_ids from MySQL
+    async with async_session_factory() as session:
+        result = await session.execute(select(DocumentModel.doc_id))
+        mysql_ids = set(row[0] for row in result.fetchall())
+
+    if not mysql_ids:
+        logger.debug("Chroma sync: MySQL has no documents, skipping")
+        return 0
+
+    # Collect doc_ids from Chroma
+    chroma = ChromaStore()
+    dummy = [0.0] * 1024
+    total = chroma.count()
+    if total == 0:
+        return 0
+
+    query_result = chroma.query_batch(embeddings=[dummy], n_results=total)
+    metas = query_result.get("metadatas", [[]])[0] or []
+    chroma_ids = set(m.get("doc_id") for m in metas if m.get("doc_id"))
+
+    stale = chroma_ids - mysql_ids
+    removed_total = 0
+    for sid in stale:
+        removed = chroma.delete_by_doc_id(sid)
+        removed_total += removed
+        logger.info(
+            "Chroma sync: removed doc_id={}... ({} chunks)",
+            sid[:16],
+            removed,
+        )
+
+    return removed_total

@@ -63,6 +63,17 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     await init_db()
     logger.info("   Database tables verified")
 
+    # ── Reconcile Chroma with MySQL (remove stale chunks) ───────────
+    try:
+        from app.core.storage import reconcile_chroma
+        removed = await reconcile_chroma()
+        if removed > 0:
+            logger.warning("   Chroma sync: removed {} stale chunks", removed)
+        else:
+            logger.info("   Chroma sync: no stale chunks found")
+    except Exception as exc:
+        logger.warning("   Chroma sync skipped: {}", exc)
+
     yield  # Application runs here
 
     # ── Shutdown ─────────────────────────────────────────────────────
