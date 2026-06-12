@@ -1,6 +1,6 @@
-import { Loader2, UploadCloud } from 'lucide-react';
-import { type ChangeEvent, type DragEvent, useRef } from 'react';
-import type { UploadState } from '../../types';
+﻿import { Loader2, UploadCloud } from "lucide-react";
+import { type ChangeEvent, type DragEvent, useRef } from "react";
+import type { UploadState } from "../../types";
 
 export type DropZoneProps = {
   upload: UploadState;
@@ -9,7 +9,7 @@ export type DropZoneProps = {
 
 export function DropZone({ upload, onFiles }: DropZoneProps) {
   const fileRef = useRef<HTMLInputElement | null>(null);
-  const busy = upload.phase === 'uploading' || upload.phase === 'processing';
+  const busy = upload.phase === "uploading" || upload.phase === "processing";
 
   const openFilePicker = () => {
     if (!busy) fileRef.current?.click();
@@ -28,13 +28,13 @@ export function DropZone({ upload, onFiles }: DropZoneProps) {
   const handleChange = (event: ChangeEvent<HTMLInputElement>) => {
     if (event.target.files && event.target.files.length > 0) {
       void onFiles(event.target.files);
-      event.target.value = '';
+      event.currentTarget.value = "";
     }
   };
 
   return (
     <section
-      className={`upload-pad ${upload.phase}`}
+      className={"upload-pad " + upload.phase}
       onDragOver={handleDragOver}
       onDrop={handleDrop}
     >
@@ -42,7 +42,7 @@ export function DropZone({ upload, onFiles }: DropZoneProps) {
         ref={fileRef}
         className="upload-input"
         type="file"
-        accept=".pdf,.md,.markdown,.txt,application/pdf,text/markdown,text/plain"
+        accept=".pdf,.md,.markdown,.txt"
         onChange={handleChange}
         disabled={busy}
       />
@@ -61,7 +61,7 @@ export function DropZone({ upload, onFiles }: DropZoneProps) {
         <small>{upload.message}</small>
       </button>
       <div className="progress-track" aria-label="上传进度">
-        <span style={{ width: `${upload.progress}%` }} />
+        <span style={{ width: upload.progress + "%" }} />
       </div>
     </section>
   );
