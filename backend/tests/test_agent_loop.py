@@ -6,6 +6,7 @@ SSE event shape, error fallback.
 
 from __future__ import annotations
 
+from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -340,3 +341,28 @@ class TestAgentLoopRun:
                 pass
             else:
                 pytest.fail(f"Unknown event type: {evt['type']}")
+
+    @pytest.mark.asyncio
+    async def test_all_agent_sse_events_include_iso_timestamp(self, monkeypatch):
+        """Every Agent SSE event should carry a parseable timestamp."""
+        _mock_retriever(monkeypatch)
+        _mock_reranker(monkeypatch)
+
+        agent = _make_patched_agent()
+        agent._llm.generate.return_value = '["q1"]'
+
+        async def _fake_check(question, context_pool, **kw):
+            from app.core.agent import CheckResult
+            return CheckResult(sufficient=True, reasoning="ok")
+
+        agent._quality_check = _fake_check
+
+        import json
+
+        events = [json.loads(evt) async for evt in agent.run("test?")]
+
+        assert events
+        for event in events:
+            timestamp = event.get("timestamp")
+            assert timestamp, event
+            datetime.fromisoformat(timestamp)

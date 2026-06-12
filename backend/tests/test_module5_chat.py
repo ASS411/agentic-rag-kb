@@ -210,6 +210,14 @@ class TestNonStreamChat:
 
 class TestStreamChat:
 
+    @staticmethod
+    def _events(response):
+        events = []
+        for line in response.text.strip().split("\n"):
+            if line.startswith("data: "):
+                events.append(json.loads(line[6:]))
+        return events
+
     def test_content_type_is_sse(self):
         with patch("app.api.chat._retrieve_chunks") as mock_retrieve:
             mock_retrieve.return_value = []
@@ -253,22 +261,72 @@ class TestStreamChat:
                 body = response.text
                 assert "data:" in body
 
-                events = []
-                for line in body.strip().split("\n"):
-                    if line.startswith("data: "):
-                        events.append(json.loads(line[6:]))
+                events = self._events(response)
 
                 types = [e["type"] for e in events]
                 assert "token" in types
                 assert "sources" in types
                 assert "answer-done" in types
                 assert "done" in types
+                assert types.index("sources") < types.index("answer-done")
+                assert types.index("answer-done") < types.index("done")
                 sources_event = [e for e in events if e["type"] == "sources"][0]
                 assert sources_event["source_chunks"][0]["chunk_id"] == "chunk_1"
                 done_event = [e for e in events if e["type"] == "done"][0]
                 assert done_event["timestamp"]
                 assert "total_rounds" in done_event
                 assert "chunks_used" in done_event
+
+    def test_agent_stream_has_answer_done_before_done(self):
+        async def _fake_run(*args, **kwargs):
+            yield json.dumps({
+                "type": "agent-step",
+                "step": "generate",
+                "message": "Generating",
+                "timestamp": "2026-01-01T00:00:00+00:00",
+            })
+            yield json.dumps({
+                "type": "answer-chunk",
+                "content": "hello",
+                "timestamp": "2026-01-01T00:00:00+00:00",
+            })
+            yield json.dumps({
+                "type": "sources",
+                "content": "1. source",
+                "source_chunks": [],
+                "chunk_ids": [],
+                "timestamp": "2026-01-01T00:00:00+00:00",
+            })
+            yield json.dumps({
+                "type": "answer-done",
+                "timestamp": "2026-01-01T00:00:00+00:00",
+            })
+            yield json.dumps({
+                "type": "done",
+                "content": "",
+                "conversation_id": None,
+                "total_rounds": 1,
+                "chunks_used": 0,
+                "timestamp": "2026-01-01T00:00:00+00:00",
+            })
+
+        with patch("app.core.agent.AgentLoop") as mock_agent_class:
+            mock_agent = MagicMock()
+            mock_agent.run = MagicMock(return_value=_fake_run())
+            mock_agent_class.return_value = mock_agent
+
+            response = client.post(
+                "/api/v1/chat",
+                json={"question": "agent stream", "use_agent": True},
+            )
+
+        assert response.status_code == 200
+        events = self._events(response)
+        types = [event["type"] for event in events]
+
+        assert "answer-done" in types
+        assert types.index("sources") < types.index("answer-done")
+        assert types.index("answer-done") < types.index("done")
 
     def test_stream_event_structure(self):
         with patch("app.api.chat._retrieve_chunks") as mock_retrieve:
