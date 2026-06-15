@@ -192,8 +192,22 @@ export default function App() {
     c.addEventListener('scroll', h, { passive: true });
     return () => c.removeEventListener('scroll', h);
   }, []);
+
+  // Auto-scroll to bottom when new content arrives, only if user
+  // hasn't deliberately scrolled up.  Uses `auto` (instant) to avoid
+  // fighting the browser's native scroll — `smooth` creates an
+  // animation that blocks user input when called in rapid succession
+  // (e.g. every token during streaming).
+  const scrollFrameRef = useRef<number | null>(null);
   useEffect(() => {
-    if (!userScrolledUpRef.current) bottomRef.current?.scrollIntoView({ behavior: chat.streaming ? 'smooth' : 'auto' });
+    if (!userScrolledUpRef.current) {
+      // Throttle to at most one scroll per animation frame
+      if (scrollFrameRef.current !== null) cancelAnimationFrame(scrollFrameRef.current);
+      scrollFrameRef.current = requestAnimationFrame(() => {
+        bottomRef.current?.scrollIntoView({ behavior: 'auto' });
+        scrollFrameRef.current = null;
+      });
+    }
   }, [messages, chat.streaming]);
   useEffect(() => { if (chat.streaming) userScrolledUpRef.current = false; }, [chat.streaming]);
 
