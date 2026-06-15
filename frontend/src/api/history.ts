@@ -49,6 +49,14 @@ export async function fetchConversations(
   return payload.data;
 }
 
+export async function deleteConversation(conversationId: string): Promise<void> {
+  const res = await fetch(`${API_BASE}/qa/conversations/${conversationId}`, { method: 'DELETE' });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error((body as any).message || `删除失败 (${res.status})`);
+  }
+}
+
 export async function fetchHistory(
   conversationId: string,
   page = 1,

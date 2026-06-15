@@ -20,6 +20,14 @@ export async function fetchDocuments(): Promise<DocumentList> {
   return payload.data;
 }
 
+export async function deleteDocument(docId: string): Promise<void> {
+  const res = await fetch(`${API_BASE}/documents/${docId}`, { method: 'DELETE' });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error((body as any).message || `删除失败 (${res.status})`);
+  }
+}
+
 export async function fetchSearchChunks(question: string): Promise<SearchChunk[]> {
   const payload = await readJson<ApiEnvelope<SearchResponse>>(
     await fetch(`${API_BASE}/search`, {

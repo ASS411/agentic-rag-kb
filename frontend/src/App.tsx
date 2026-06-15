@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import clsx from 'clsx';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Menu } from 'lucide-react';
+import { Menu, Trash2 } from 'lucide-react';
 
 import type { ChatMessage, DocumentItem, UploadState } from './types';
 import { fetchDocuments, uploadFile } from './api/documents';
-import { fetchConversations, fetchHistory, type QARecord } from './api/history';
+import { fetchConversations, fetchHistory, deleteConversation, type QARecord } from './api/history';
 import { useQAStore } from './stores/qaStore';
 import { useSourceScroll } from './hooks/useSourceScroll';
 
@@ -17,6 +17,16 @@ import { WelcomePanel } from './components/qa/WelcomePanel';
 import { AnswerPanel } from './components/qa/AnswerPanel';
 import { QuestionInput } from './components/qa/QuestionInput';
 import { SourcePanel } from './components/qa/SourcePanel';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from './components/ui/alert-dialog';
 
 import { useChatStream } from './hooks/useSSE';
 
@@ -41,6 +51,59 @@ function historyAnswerText(record: QARecord) {
   if (record.answer?.trim()) return record.answer;
   if (record.status === 'generating') return '生成中...';
   return '生成已中断';
+}
+
+function ConversationDeleteButton({ conversationId, title, onDeleted }: { conversationId: string; title: string; onDeleted: () => void }) {
+  const qc = useQueryClient();
+  const [open, setOpen] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+
+  const handleDelete = async () => {
+    setDeleting(true);
+    try {
+      await deleteConversation(conversationId);
+      void qc.invalidateQueries({ queryKey: ['conversations'] });
+      onDeleted();
+    } catch {
+      // keep open on error
+    } finally {
+      setDeleting(false);
+      setOpen(false);
+    }
+  };
+
+  const shortTitle = title.slice(0, 40);
+
+  return (
+    <AlertDialog open={open} onOpenChange={setOpen}>
+      <button
+        type="button"
+        className="history-delete-btn"
+        aria-label={`删除对话 ${shortTitle}`}
+        onClick={(e) => { e.stopPropagation(); setOpen(true); }}
+      >
+        <Trash2 size={12} />
+      </button>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>确认删除对话</AlertDialogTitle>
+          <AlertDialogDescription>
+            将删除「{shortTitle}」及其所有问答记录，此操作不可撤销。
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel disabled={deleting}>取消</AlertDialogCancel>
+          <AlertDialogAction
+            disabled={deleting}
+            className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            onClick={(e) => { e.preventDefault(); void handleDelete(); }}
+          >
+            {deleting ? '删除中...' : '删除'}
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+  );
 }
 
 export default function App() {
@@ -253,17 +316,30 @@ export default function App() {
           onNewConversation={handleNewConversation}
           history={
             conversations.length > 0 ? (
-              conversations.map((c) => (
-                <button
-                  key={c.conversation_id}
-                  className={`history-item${activeConversationId === c.conversation_id ? ' active' : ''}`}
-                  type="button"
-                  title={c.last_question}
-                  onClick={() => { void loadConversation(c.conversation_id); }}
-                >
-                  {c.title || c.last_question?.slice(0, 40) || '新对话'}
-                </button>
-              ))
+              conversations.map((c) => {
+                const label = c.title || c.last_question?.slice(0, 40) || '新对话';
+                return (
+                  <div key={c.conversation_id} className="history-item-row">
+                    <button
+                      className={`history-item${activeConversationId === c.conversation_id ? ' active' : ''}`}
+                      type="button"
+                      title={c.last_question}
+                      onClick={() => { void loadConversation(c.conversation_id); }}
+                    >
+                      {label}
+                    </button>
+                    <ConversationDeleteButton
+                      conversationId={c.conversation_id}
+                      title={label}
+                      onDeleted={() => {
+                        if (activeConversationId === c.conversation_id) {
+                          handleNewConversation();
+                        }
+                      }}
+                    />
+                  </div>
+                );
+              })
             ) : (
               <p className="text-xs text-muted-foreground px-2">暂无历史对话</p>
             )

@@ -209,6 +209,47 @@ async def list_history(
 
 
 # ---------------------------------------------------------------------------
+# DELETE /api/v1/qa/conversations/{conversation_id}
+# ---------------------------------------------------------------------------
+
+
+@router.delete("/conversations/{conversation_id}")
+async def delete_conversation(
+    conversation_id: str,
+    db: AsyncSession = Depends(get_db),
+) -> APIResponse[str]:
+    """Delete a conversation and all its Q&A records."""
+    conv_q = select(ConversationModel).where(
+        ConversationModel.conversation_id == conversation_id
+    )
+    conv_result = await db.execute(conv_q)
+    conv = conv_result.scalar_one_or_none()
+    if conv is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Conversation not found: {conversation_id}",
+        )
+
+    records_q = select(QARecordModel).where(
+        QARecordModel.conversation_id == conversation_id
+    )
+    records_result = await db.execute(records_q)
+    records = records_result.scalars().all()
+    for record in records:
+        await db.delete(record)
+
+    await db.delete(conv)
+    await db.commit()
+
+    logger.info(
+        "Conversation deleted: conv_id={}, records={}",
+        conversation_id,
+        len(records),
+    )
+    return APIResponse.ok(data=conversation_id, message="Conversation deleted")
+
+
+# ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 

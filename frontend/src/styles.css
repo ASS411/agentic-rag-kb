@@ -807,9 +807,15 @@ h2 { font-size: 20px; letter-spacing: -0.4px; }
   animation: collapsible-up 200ms ease-out;
 }
 
+.history-item-row {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
 .history-item {
-  display: block;
-  width: 100%;
+  flex: 1;
+  min-width: 0;
   text-align: left;
   padding: 6px 8px;
   border-radius: 5px;
@@ -830,6 +836,29 @@ h2 { font-size: 20px; letter-spacing: -0.4px; }
 .history-item.active {
   background: hsl(var(--primary) / 0.12);
   color: hsl(var(--primary));
+}
+
+.history-delete-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: hsl(var(--muted-foreground));
+  cursor: pointer;
+  flex-shrink: 0;
+  opacity: 0;
+  transition: opacity 100ms ease, background 100ms ease, color 100ms ease;
+}
+.history-item-row:hover .history-delete-btn {
+  opacity: 1;
+}
+.history-delete-btn:hover {
+  background: hsl(var(--destructive) / 0.15);
+  color: hsl(var(--destructive));
 }
 
 /* ── Upload modal ──────────────────────────────────────────────── */
