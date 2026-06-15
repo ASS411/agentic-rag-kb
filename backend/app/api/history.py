@@ -1,4 +1,4 @@
-﻿"""History API — conversation list and Q&A record retrieval.
+"""History API — conversation list and Q&A record retrieval.
 
 Provides:
 - GET /api/v1/qa/conversations — paginated conversation list
@@ -7,8 +7,10 @@ Provides:
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
+
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import select, func, desc
+from sqlalchemy import select, func, desc, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 from loguru import logger
 
@@ -24,6 +26,26 @@ from app.models.history import (
 from app.models.response import APIResponse
 
 router = APIRouter(prefix="/qa", tags=["history"])
+
+# ── Stale-generating record TTL ─────────────────────────────────────
+
+STALE_GENERATING_MINUTES = 30
+
+
+def _stale_cutoff() -> datetime:
+    """Return the UTC-naive timestamp before which generating records are stale."""
+    return datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(
+        minutes=STALE_GENERATING_MINUTES
+    )
+
+
+def _not_stale_generating_filter():
+    """SQLAlchemy filter: exclude stale generating records."""
+    cutoff = _stale_cutoff()
+    return ~and_(
+        QARecordModel.status == "generating",
+        QARecordModel.created_at < cutoff,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -57,19 +79,29 @@ async def list_conversations(
 
     items: list[ConversationSummary] = []
     for conv in conversations:
-        # Count records per conversation
+        # Count valid records (exclude stale generating)
+        valid_filter = _not_stale_generating_filter()
         count_q = (
             select(func.count())
             .select_from(QARecordModel)
-            .where(QARecordModel.conversation_id == conv.conversation_id)
+            .where(
+                QARecordModel.conversation_id == conv.conversation_id,
+                valid_filter,
+            )
         )
         count_result = await db.execute(count_q)
         record_count = count_result.scalar() or 0
 
-        # Get last question
+        if record_count == 0:
+            continue  # skip conversations with only stale generating records
+
+        # Get last question from valid records
         last_q = (
             select(QARecordModel.question)
-            .where(QARecordModel.conversation_id == conv.conversation_id)
+            .where(
+                QARecordModel.conversation_id == conv.conversation_id,
+                valid_filter,
+            )
             .order_by(desc(QARecordModel.created_at))
             .limit(1)
         )
@@ -121,21 +153,29 @@ async def list_history(
             detail=f"Conversation not found: {conversation_id}",
         )
 
-    # Count records
+    valid_filter = _not_stale_generating_filter()
+
+    # Count valid records (exclude stale generating)
     count_q = (
         select(func.count())
         .select_from(QARecordModel)
-        .where(QARecordModel.conversation_id == conversation_id)
+        .where(
+            QARecordModel.conversation_id == conversation_id,
+            valid_filter,
+        )
     )
     count_result = await db.execute(count_q)
     total = count_result.scalar() or 0
 
     offset = (page - 1) * size
 
-    # Fetch records
+    # Fetch valid records (exclude stale generating)
     records_q = (
         select(QARecordModel)
-        .where(QARecordModel.conversation_id == conversation_id)
+        .where(
+            QARecordModel.conversation_id == conversation_id,
+            valid_filter,
+        )
         .order_by(desc(QARecordModel.created_at))
         .limit(size)
         .offset(offset)
