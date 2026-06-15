@@ -96,31 +96,39 @@ export default function App() {
   // ── Load conversation from history ────────────────────────────
   const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
   const loadConversation = useCallback(async (conversationId: string) => {
-    const { fetchHistory } = await import('./api/history');
-    const result = await fetchHistory(conversationId);
-    useQAStore.getState().reset();
-    // API returns newest first — reverse for chronological order
-    const records = [...result.items].reverse();
-    let lastSources: any[] = [];
-    for (const record of records) {
-      useQAStore.getState().addMessage({ id: crypto.randomUUID(), role: 'user', content: record.question });
-      // Skip generating records with no answer (interrupted / stale)
-      if (!record.answer && record.status === 'generating') {
-        continue;
+    try {
+      const { fetchHistory } = await import('./api/history');
+      const result = await fetchHistory(conversationId);
+      // Filter out generating records (no answer yet)
+      const completed = result.items.filter(
+        (r) => !(!r.answer && r.status === 'generating'),
+      );
+      if (completed.length === 0) {
+        // All records are still generating — nothing to show yet
+        return;
       }
-      useQAStore.getState().addMessage({ id: crypto.randomUUID(), role: 'assistant', content: record.answer || '（生成已中断）' });
-      if (record.sources?.length) {
-        lastSources = record.sources;
+
+      useQAStore.getState().reset();
+      // API returns newest first — reverse for chronological order
+      const records = [...completed].reverse();
+      let lastSources: any[] = [];
+      for (const record of records) {
+        useQAStore.getState().addMessage({ id: crypto.randomUUID(), role: 'user', content: record.question });
+        useQAStore.getState().addMessage({ id: crypto.randomUUID(), role: 'assistant', content: record.answer || '（生成已中断）' });
+        if (record.sources?.length) {
+          lastSources = record.sources;
+        }
       }
+      // Set sources from the last record that had them
+      if (lastSources.length > 0) {
+        const mapped = lastSources.map((s: any) => ({ ...s, content: s.content_snippet || '', doc_type: s.doc_type || 'pdf' }));
+        useQAStore.getState().setSources(mapped as any, '');
+      }
+      setActiveConversationId(conversationId);
+      void qc.invalidateQueries({ queryKey: ['conversations'] });
+    } catch (err) {
+      console.error('Failed to load conversation:', err);
     }
-    // Set sources from the last record that had them
-    if (lastSources.length > 0) {
-      // Map stored sources (content_snippet) to SearchChunk shape (content)
-      const mapped = lastSources.map((s: any) => ({ ...s, content: s.content_snippet || '', doc_type: s.doc_type || 'pdf' }));
-      useQAStore.getState().setSources(mapped as any, '');
-    }
-    setActiveConversationId(conversationId);
-    void qc.invalidateQueries({ queryKey: ['conversations'] });
   }, [qc]);
 
   // ── Chat stream ───────────────────────────────────────────────
