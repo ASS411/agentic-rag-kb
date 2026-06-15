@@ -24,6 +24,7 @@
 }
 .message-scroll {
   flex: 1;
+  min-height: 0;   /* required for overflow-y to work inside flex column */
   overflow-y: auto;
   padding: 24px 28px 12px;
 }
@@ -882,6 +883,7 @@ h2 { font-size: 20px; letter-spacing: -0.4px; }
 
 .source-pane {
   overflow-y: auto;
+  min-height: 0;   /* required for overflow to work inside CSS grid */
   scrollbar-width: none;
   -ms-overflow-style: none;
 }
