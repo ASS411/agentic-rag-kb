@@ -1,9 +1,9 @@
-﻿import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import clsx from 'clsx';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Menu } from 'lucide-react';
 
-import type { DocumentItem, UploadState } from './types';
+import type { ChatMessage, DocumentItem, UploadState } from './types';
 import { fetchDocuments, uploadFile } from './api/documents';
 import { fetchConversations, fetchHistory, type QARecord } from './api/history';
 import { useQAStore } from './stores/qaStore';
@@ -109,8 +109,6 @@ export default function App() {
     const requestId = loadConversationRequestRef.current + 1;
     loadConversationRequestRef.current = requestId;
     setActiveConversationId(conversationId);
-    useQAStore.getState().reset();
-    useQAStore.getState().selectSource(null);
 
     try {
       const result = await fetchHistory(conversationId);
@@ -118,15 +116,19 @@ export default function App() {
 
       // API returns newest first — reverse for chronological order
       const records = [...result.items].reverse();
+      // Build all messages before mutating state (avoids flicker)
+      const messages: ChatMessage[] = [];
       let lastSources: any[] = [];
       for (const record of records) {
-        useQAStore.getState().addMessage({ id: crypto.randomUUID(), role: 'user', content: record.question });
-        useQAStore.getState().addMessage({ id: crypto.randomUUID(), role: 'assistant', content: historyAnswerText(record) });
+        messages.push({ id: crypto.randomUUID(), role: 'user', content: record.question });
+        messages.push({ id: crypto.randomUUID(), role: 'assistant', content: historyAnswerText(record) });
         if (record.sources?.length) {
           lastSources = record.sources;
         }
       }
-      // Set sources from the last record that had them
+      // Atomically replace state (no intermediate empty render)
+      useQAStore.getState().reset();
+      useQAStore.getState().setMessages(messages);
       if (lastSources.length > 0) {
         const mapped = lastSources.map((s: any) => ({ ...s, content: s.content_snippet || '', doc_type: s.doc_type || 'pdf' }));
         useQAStore.getState().setSources(mapped as any, '');
