@@ -1,6 +1,8 @@
-import { Database, MessageSquare, PanelLeftClose, PanelLeftOpen, Plus, Upload } from 'lucide-react';
+import { ChevronDown, Database, MessageSquare, PanelLeftClose, PanelLeftOpen, Plus, Upload } from 'lucide-react';
 import type { ReactNode } from 'react';
+import { useState } from 'react';
 import clsx from 'clsx';
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '../ui/collapsible';
 
 export type SidebarProps = {
   children: ReactNode;
@@ -15,6 +17,27 @@ export type SidebarProps = {
   /** New conversation trigger */
   onNewConversation?: () => void;
 };
+
+function HistorySection({ children }: { children: ReactNode }) {
+  const [open, setOpen] = useState(true);
+  return (
+    <Collapsible open={open} onOpenChange={setOpen} className="history-section">
+      <CollapsibleTrigger asChild>
+        <button type="button" className="history-section-header">
+          <MessageSquare size={13} className="inline mr-1" />
+          对话历史
+          <ChevronDown
+            size={13}
+            className={clsx('ml-auto transition-transform duration-200', open && 'rotate-180')}
+          />
+        </button>
+      </CollapsibleTrigger>
+      <CollapsibleContent className="history-list-wrapper">
+        <div className="history-list">{children}</div>
+      </CollapsibleContent>
+    </Collapsible>
+  );
+}
 
 export function Sidebar({
   children,
@@ -106,13 +129,7 @@ export function Sidebar({
         ) : null}
 
         {history ? (
-          <div className="history-section">
-            <h3>
-              <MessageSquare size={13} className="inline mr-1" />
-              对话历史
-            </h3>
-            {history}
-          </div>
+          <HistorySection>{history}</HistorySection>
         ) : null}
       </aside>
     </>

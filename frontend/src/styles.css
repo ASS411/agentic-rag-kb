@@ -38,8 +38,12 @@
   backdrop-filter: blur(18px);
 }
 .left-rail {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
   padding: 22px;
   border-right: 1px solid hsl(var(--border));
+  overflow: hidden;
 }
 .source-pane {
   padding: 22px;
@@ -186,7 +190,11 @@ h2 { font-size: 20px; letter-spacing: -0.4px; }
 }
 .section-heading span { font-size: 14px; font-weight: 600; }
 .section-heading small { color: hsl(var(--muted-foreground)); }
-.rail-section { margin-top: 28px; }
+.rail-section { margin-top: 28px; max-height: 30vh; overflow-y: auto; display: flex; flex-direction: column; scrollbar-width: thin; scrollbar-color: hsl(var(--border)) transparent; }
+.rail-section::-webkit-scrollbar { width: 4px; }
+.rail-section::-webkit-scrollbar-track { background: transparent; }
+.rail-section::-webkit-scrollbar-thumb { background: hsl(var(--border)); border-radius: 2px; }
+.rail-section::-webkit-scrollbar-thumb:hover { background: hsl(var(--muted-foreground)); }
 .doc-list { display: flex; flex-direction: column; gap: 8px; }
 .doc-card {
   display: grid;
@@ -696,15 +704,109 @@ h2 { font-size: 20px; letter-spacing: -0.4px; }
 /* ── History list ──────────────────────────────────────────────── */
 
 .history-section {
+  flex: 1;
+  min-height: 0;
   margin-top: 20px;
+  display: flex;
+  flex-direction: column;
 }
-.history-section h3 {
+.history-section-header {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  width: 100%;
+  padding: 4px 0;
+  border: none;
+  background: none;
+  cursor: pointer;
   font-size: 0.75rem;
   text-transform: uppercase;
   letter-spacing: 0.05em;
   color: hsl(var(--muted-foreground));
   margin: 0 0 8px;
+  text-align: left;
+  transition: color 100ms ease;
+  flex-shrink: 0;
 }
+.history-section-header:hover {
+  color: hsl(var(--foreground));
+}
+.history-list-wrapper {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+.history-list-wrapper[data-state="closed"] {
+  flex: 0;
+}
+.history-list {
+  height: 100%;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: hsl(var(--border)) transparent;
+}
+.history-list::-webkit-scrollbar {
+  width: 4px;
+}
+.history-list::-webkit-scrollbar-track {
+  background: transparent;
+}
+.history-list::-webkit-scrollbar-thumb {
+  background: hsl(var(--border));
+  border-radius: 2px;
+}
+.history-list::-webkit-scrollbar-thumb:hover {
+  background: hsl(var(--muted-foreground));
+}
+
+@keyframes collapsible-down {
+  from { height: 0; opacity: 0; }
+  to { height: var(--radix-collapsible-content-height); opacity: 1; }
+}
+@keyframes collapsible-up {
+  from { height: var(--radix-collapsible-content-height); opacity: 1; }
+  to { height: 0; opacity: 0; }
+}
+/* ── Turn collapsible (chat message folding) ─────────────────── */
+
+.turn-collapsible {
+  margin-bottom: 4px;
+}
+.turn-collapse-trigger {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 6px 10px;
+  border: 1px dashed hsl(var(--border));
+  border-radius: 8px;
+  background: transparent;
+  color: hsl(var(--muted-foreground));
+  font-size: 0.82rem;
+  cursor: pointer;
+  text-align: left;
+  transition: background 100ms ease, color 100ms ease;
+}
+.turn-collapse-trigger:hover {
+  background: hsl(var(--popover));
+  color: hsl(var(--foreground));
+}
+.turn-collapse-summary {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.turn-collapsible-content {
+  overflow: hidden;
+}
+.turn-collapsible-content[data-state="open"] {
+  animation: collapsible-down 200ms ease-out;
+}
+.turn-collapsible-content[data-state="closed"] {
+  animation: collapsible-up 200ms ease-out;
+}
+
 .history-item {
   display: block;
   width: 100%;
