@@ -6,11 +6,9 @@ on transient failures.  Configuration is read from ``app.config.settings.embeddi
 
 from __future__ import annotations
 
-import asyncio
 import time
 from typing import Any
 
-import httpx
 from loguru import logger
 from openai import AsyncOpenAI
 from tenacity import (
@@ -182,19 +180,21 @@ class Embedder:
         if len(texts) <= self._batch_size:
             return await self._call_api(inputs=texts)
 
-        # Split into sub-batches and call concurrently (up to 5 concurrent)
+        # Split into sub-batches and send sequentially to respect API rate limits
         sub_batches = _chunk_list(texts, self._batch_size)
-        sem = asyncio.Semaphore(5)
 
-        async def _batch(batch_texts: list[str]) -> list[list[float]]:
-            async with sem:
-                return await self._call_api(inputs=batch_texts)
+        all_results: list[list[float]] = []
+        for i, batch in enumerate(sub_batches):
+            logger.debug(
+                "Embedding batch {}/{}: {} texts",
+                i + 1,
+                len(sub_batches),
+                len(batch),
+            )
+            batch_result = await self._call_api(inputs=batch)
+            all_results.extend(batch_result)
 
-        tasks = [_batch(b) for b in sub_batches]
-        results = await asyncio.gather(*tasks)
-
-        # Flatten back into original order
-        return [vec for batch_result in results for vec in batch_result]
+        return all_results
 
     # ------------------------------------------------------------------
     # Internal

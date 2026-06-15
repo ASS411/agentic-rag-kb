@@ -103,9 +103,9 @@ class EmbeddingSettings(BaseSettings):
         description="Output embedding dimensions",
     )
     batch_size: int = Field(
-        default=25,
+        default=10,
         ge=1,
-        le=100,
+        le=10,
         description="Max texts per batch API call",
     )
     max_retries: int = Field(
