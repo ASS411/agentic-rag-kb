@@ -52,22 +52,6 @@ export function AnswerPanel({
               {message.role === 'user' ? '你' : '知识库'}
             </div>
             <div className="message-body">
-              {!message.content ? (
-                <span className="typing">
-                  <Loader2 className="spin" size={16} aria-hidden="true" />
-                  正在生成回答
-                </span>
-              ) : message.role === 'assistant' ? (
-                <SourceHighlight
-                  content={message.content}
-                  sources={hasSources ? sources : []}
-                  selectedSourceId={hasSources ? selectedSourceId : null}
-                  onSelectSource={hasSources ? onSelectSource : () => {}}
-                />
-              ) : (
-                message.content
-              )}
-
               {isLastAssistant && hasThinking ? (
                 <details
                   className="thinking-inline"
@@ -100,6 +84,21 @@ export function AnswerPanel({
                   </div>
                 </details>
               ) : null}
+              {!message.content ? (
+                <span className="typing">
+                  <Loader2 className="spin" size={16} aria-hidden="true" />
+                  正在生成回答
+                </span>
+              ) : message.role === 'assistant' ? (
+                <SourceHighlight
+                  content={message.content}
+                  sources={hasSources ? sources : []}
+                  selectedSourceId={hasSources ? selectedSourceId : null}
+                  onSelectSource={hasSources ? onSelectSource : () => {}}
+                />
+              ) : (
+                message.content
+              )}
             </div>
           </article>
         );
