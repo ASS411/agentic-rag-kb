@@ -3,8 +3,9 @@ and Pydantic schemas for the history API.
 
 Tables (defined in db/init.sql):
   - conversations(conversation_id, title, created_at)
-  - qa_records(record_id, conversation_id, question, answer, sources_json,
-               agent_steps_json, total_rounds, model, tokens_used, created_at)
+  - qa_records(record_id, conversation_id, question, answer, status,
+               sources_json, agent_steps_json, total_rounds, model,
+               tokens_used, created_at)
 """
 
 from __future__ import annotations
@@ -49,7 +50,8 @@ class QARecordModel(Base):
     record_id = Column(String(64), primary_key=True)
     conversation_id = Column(String(64), ForeignKey("conversations.conversation_id"), nullable=False)
     question = Column(Text, nullable=False)
-    answer = Column(Text, nullable=False)
+    answer = Column(Text, nullable=True)
+    status = Column(String(16), nullable=False, default="complete", server_default="complete")
     sources_json = Column(MySQLJSON, nullable=True)
     agent_steps_json = Column(MySQLJSON, nullable=True)
     total_rounds = Column(Integer, nullable=True)
@@ -76,6 +78,7 @@ class ConversationSummary(BaseModel):
     title: str | None
     record_count: int = 0
     last_question: str = ""
+    status: str | None = None
     created_at: str | None = None
 
 
@@ -94,7 +97,8 @@ class QARecordItem(BaseModel):
     record_id: str
     conversation_id: str
     question: str
-    answer: str
+    answer: str | None
+    status: str | None = None
     sources: list[dict[str, Any]] = Field(default_factory=list)
     agent_steps: list[dict[str, Any]] = Field(default_factory=list)
     total_rounds: int | None = None

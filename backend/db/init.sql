@@ -34,7 +34,8 @@ CREATE TABLE IF NOT EXISTS qa_records (
     record_id VARCHAR(64) PRIMARY KEY,
     conversation_id VARCHAR(64) NOT NULL,
     question TEXT NOT NULL,
-    answer TEXT NOT NULL,
+    answer TEXT,                          -- NULLABLE: empty while generating
+    status VARCHAR(16) DEFAULT 'complete', -- generating | complete | error
     sources_json JSON,                   -- [{chunk_id, doc_name, page, snippet, score}]
     agent_steps_json JSON,               -- Agent 各步骤的记录
     total_rounds INT,

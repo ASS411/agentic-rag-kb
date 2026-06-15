@@ -155,6 +155,7 @@ async def list_history(
                 conversation_id=r.conversation_id,
                 question=r.question,
                 answer=r.answer,
+                status=r.status,
                 sources=sources,
                 agent_steps=steps,
                 total_rounds=r.total_rounds,
