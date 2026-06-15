@@ -256,25 +256,24 @@ async def _stream_agent_chat(body: ChatRequest):
         logger.error("Agent loop error: {}", exc)
         yield _sse_error(f"Agent error: {exc}")
         return
-    except GeneratorExit:
-        # Client disconnected during agent loop — partial answer is
-        # still useful; fall through to complete the pending record.
-        pass
-
-    # ── 2. Complete the pending record (always, even on disconnect) ─
-    full_answer = "".join(answer_parts)
-    if full_answer.strip():
-        try:
-            await complete_qa_record(
-                record_id=record_id,
-                answer=full_answer,
-                source_chunks=source_chunks,
-                total_rounds=total_rounds,
-            )
-        except Exception as exc:
-            logger.warning("Failed to complete agent QA record: {}", exc)
-    else:
-        logger.warning("Empty agent answer — record stays as generating: {}", record_id)
+    finally:
+        # Always complete the record — catches GeneratorExit,
+        # CancelledError, and normal completion in one place.
+        full_answer = "".join(answer_parts)
+        if full_answer.strip():
+            try:
+                await complete_qa_record(
+                    record_id=record_id,
+                    answer=full_answer,
+                    source_chunks=source_chunks,
+                    total_rounds=total_rounds,
+                )
+            except BaseException as exc:
+                if not isinstance(exc, Exception):
+                    raise  # re-raise GeneratorExit / CancelledError
+                logger.warning("Failed to complete agent QA record: {}", exc)
+        else:
+            logger.warning("Empty agent answer — record stays as generating: {}", record_id)
 
 
 async def _non_stream_agent_chat(body: ChatRequest) -> JSONResponse:
@@ -410,23 +409,22 @@ async def _stream_chat(body: ChatRequest) -> AsyncGenerator[str, None]:
         logger.error("Chat stream LLM error: {}", exc)
         yield _sse_error(f"LLM error: {exc}")
         return
-    except GeneratorExit:
-        # Client disconnected — partial answer is still
-        # useful; fall through to complete the pending record.
-        pass
-
-    # ── 5. Complete the pending record (always, even on disconnect) ─
-    full_answer = "".join(full_answer_parts)
-    if full_answer.strip():
-        try:
-            await complete_qa_record(
-                record_id=record_id,
-                answer=full_answer,
-                source_chunks=chunks,
-                total_rounds=1,
-            )
-        except Exception as exc:
-            logger.warning("Failed to complete QA stream record: {}", exc)
+    finally:
+        # Always complete the record — catches GeneratorExit,
+        # CancelledError, and normal completion in one place.
+        full_answer = "".join(full_answer_parts)
+        if full_answer.strip():
+            try:
+                await complete_qa_record(
+                    record_id=record_id,
+                    answer=full_answer,
+                    source_chunks=chunks,
+                    total_rounds=1,
+                )
+            except BaseException as exc:
+                if not isinstance(exc, Exception):
+                    raise  # re-raise GeneratorExit / CancelledError
+                logger.warning("Failed to complete QA stream record: {}", exc)
 
     # ── 6. Send sources + done ──────────────────────────────────────
     yield _sse_event(
