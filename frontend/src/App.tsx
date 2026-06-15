@@ -136,10 +136,16 @@ export default function App() {
       setSourcePanelPinned(true);
     },
     onDone: () => {
-      // Delay refresh — backend saves history AFTER stream completes
+      // Refresh history — backend now persists BEFORE stream starts,
+      // so the record is already in the database.
       setTimeout(() => {
         void qc.invalidateQueries({ queryKey: ['conversations'] });
-      }, 1500);
+      }, 500);
+    },
+    onMeta: (conversationId, _recordId) => {
+      setActiveConversationId(conversationId);
+      // Immediately refresh sidebar so the new conversation appears
+      void qc.invalidateQueries({ queryKey: ['conversations'] });
     },
     onAgentStep: (step) => {
       useQAStore.getState().addThinkingStep(step);

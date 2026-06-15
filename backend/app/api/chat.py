@@ -1,7 +1,13 @@
 """Chat API — RAG Q&A with SSE streaming and non-streaming fallback.
 
-``POST /api/v1/chat``
-    Flow: search → build prompt → LLM generate (streaming or full).
+``POST /api/v1/qa/ask``
+    Flow: create-pending-record → search → build prompt → LLM generate
+    → complete-record.
+
+Two-phase persistence:
+  1. INSERT qa_record (status='generating') BEFORE retrieval starts.
+  2. UPDATE answer + status='complete' AFTER generation finishes.
+  → A ``meta`` SSE event carries conversation_id/record_id early.
 
 Supports:
 - SSE ``text/event-stream`` token-by-token output (``stream=true``, default)
@@ -198,14 +204,25 @@ async def chat(
 
 
 async def _stream_agent_chat(body: ChatRequest):
-    """Run the agent loop and yield SSE events. Saves history on completion."""
+    """Run the agent loop and yield SSE events.
+
+    Persistence: creates a pending record before the Agent starts and
+    completes it after generation finishes (two-phase pattern).
+    """
     from app.core.agent import AgentLoop
+    from app.core.history_store import create_pending_qa_record, complete_qa_record
+
+    # ── 1. Create pending record BEFORE generation ─────────────────
+    conv_id, record_id = await create_pending_qa_record(
+        conversation_id=body.conversation_id,
+        question=body.question,
+    )
+    yield _sse_event("meta", "", conversation_id=conv_id, record_id=record_id)
 
     agent = AgentLoop()
     answer_parts: list[str] = []
     source_chunks: list[SearchChunk] = []
     total_rounds = 0
-    conversation_id = body.conversation_id
 
     try:
         async for event_json in agent.run(
@@ -222,37 +239,45 @@ async def _stream_agent_chat(body: ChatRequest):
                 source_chunks = [SearchChunk.model_validate(c) for c in raw]
             elif et == "done":
                 total_rounds = int(event.get("total_rounds", 0))
-                conversation_id = event.get("conversation_id", conversation_id)
     except Exception as exc:
         logger.error("Agent loop error: {}", exc)
         yield _sse_error(f"Agent error: {exc}")
         return
 
-    # Persist to history
+    # ── 2. Complete the pending record ────────────────────────────
     full_answer = "".join(answer_parts)
     if full_answer.strip():
         try:
-            from app.core.history_store import save_qa_record
-            await save_qa_record(
-                conversation_id=conversation_id,
-                question=body.question,
+            await complete_qa_record(
+                record_id=record_id,
                 answer=full_answer,
                 source_chunks=source_chunks,
                 total_rounds=total_rounds,
             )
         except Exception as exc:
-            logger.warning("Failed to save agent QA record: {}", exc)
+            logger.warning("Failed to complete agent QA record: {}", exc)
+    else:
+        logger.warning("Empty agent answer — record stays as generating: {}", record_id)
 
 
 async def _non_stream_agent_chat(body: ChatRequest) -> JSONResponse:
-    """Run the agent loop and collapse streamed events into a JSON answer."""
+    """Run the agent loop and collapse streamed events into a JSON answer.
+
+    Uses the two-phase persistence pattern.
+    """
     from app.core.agent import AgentLoop
+    from app.core.history_store import create_pending_qa_record, complete_qa_record
+
+    # ── 1. Create pending record BEFORE generation ─────────────────
+    conv_id, record_id = await create_pending_qa_record(
+        conversation_id=body.conversation_id,
+        question=body.question,
+    )
 
     agent = AgentLoop()
     answer_parts: list[str] = []
     sources_text = ""
     source_chunks: list[SearchChunk] = []
-    conversation_id = body.conversation_id
 
     try:
         async for event_json in agent.run(
@@ -270,8 +295,6 @@ async def _non_stream_agent_chat(body: ChatRequest) -> JSONResponse:
                 source_chunks = [
                     SearchChunk.model_validate(chunk) for chunk in raw_chunks
                 ]
-            elif event_type == "done":
-                conversation_id = event.get("conversation_id", conversation_id)
             elif event_type == "error":
                 message = str(event.get("content", "Agent error"))
                 return JSONResponse(
@@ -285,26 +308,24 @@ async def _non_stream_agent_chat(body: ChatRequest) -> JSONResponse:
             content=APIResponse.error(502, f"Agent error: {exc}").model_dump(),
         )
 
-    # Persist to history
+    # ── 2. Complete the pending record ────────────────────────────
     full_answer = "".join(answer_parts)
     if full_answer.strip():
         try:
-            from app.core.history_store import save_qa_record
-            conversation_id = await save_qa_record(
-                conversation_id=conversation_id,
-                question=body.question,
+            await complete_qa_record(
+                record_id=record_id,
                 answer=full_answer,
                 source_chunks=source_chunks,
             )
         except Exception as exc:
-            logger.warning("Failed to save agent QA record: {}", exc)
+            logger.warning("Failed to complete agent QA record: {}", exc)
 
     response = ChatResponse(
-        answer="".join(answer_parts),
+        answer=full_answer,
         sources=sources_text,
         source_chunks=source_chunks,
         question=body.question,
-        conversation_id=conversation_id,
+        conversation_id=conv_id,
     )
 
     return JSONResponse(content=APIResponse.ok(data=response).model_dump())
@@ -318,20 +339,33 @@ async def _non_stream_agent_chat(body: ChatRequest) -> JSONResponse:
 async def _stream_chat(body: ChatRequest) -> AsyncGenerator[str, None]:
     """Generate SSE events for a streaming RAG chat response.
 
+    Two-phase persistence: creates a pending record first, completes it
+    after the LLM stream finishes.
+
     Event sequence:
-        1. ``token`` events — one per content delta
-        2. ``sources`` event — the formatted source list
-        3. ``done`` event — final marker
-        4. ``error`` event — on failure (terminates stream)
+        1. ``meta`` event — conversation_id + record_id (early)
+        2. ``token`` events — one per content delta
+        3. ``sources`` event — the formatted source list
+        4. ``done`` event — final marker
+        5. ``error`` event — on failure (terminates stream)
     """
-    # ── 1. Retrieve chunks ──────────────────────────────────────────
+    from app.core.history_store import create_pending_qa_record, complete_qa_record
+
+    # ── 1. Create pending record BEFORE generation ─────────────────
+    conv_id, record_id = await create_pending_qa_record(
+        conversation_id=body.conversation_id,
+        question=body.question,
+    )
+    yield _sse_event("meta", "", conversation_id=conv_id, record_id=record_id)
+
+    # ── 2. Retrieve chunks ──────────────────────────────────────────
     try:
         chunks = await _retrieve_chunks(body.question, body.top_k)
     except HTTPException as exc:
         yield _sse_error(exc.detail)
         return
 
-    # ── 2. Build prompt ─────────────────────────────────────────────
+    # ── 3. Build prompt ─────────────────────────────────────────────
     builder = RAGPromptBuilder()
     messages = builder.build(chunks, body.question)
     sources_text = format_sources(chunks)
@@ -342,7 +376,7 @@ async def _stream_chat(body: ChatRequest) -> AsyncGenerator[str, None]:
         len(messages),
     )
 
-    # ── 3. Stream tokens ────────────────────────────────────────────
+    # ── 4. Stream tokens ────────────────────────────────────────────
     llm = LLMClient()
     full_answer_parts: list[str] = []
     try:
@@ -358,23 +392,20 @@ async def _stream_chat(body: ChatRequest) -> AsyncGenerator[str, None]:
         yield _sse_error(f"LLM error: {exc}")
         return
 
-    # ── 4. Persist to history ───────────────────────────────────────
+    # ── 5. Complete the pending record ──────────────────────────────
     full_answer = "".join(full_answer_parts)
-    conv_id = body.conversation_id
     if full_answer.strip():
         try:
-            from app.core.history_store import save_qa_record
-            conv_id = await save_qa_record(
-                conversation_id=body.conversation_id,
-                question=body.question,
+            await complete_qa_record(
+                record_id=record_id,
                 answer=full_answer,
                 source_chunks=chunks,
                 total_rounds=1,
             )
         except Exception as exc:
-            logger.warning("Failed to save QA stream record: {}", exc)
+            logger.warning("Failed to complete QA stream record: {}", exc)
 
-    # ── 5. Send sources + done ──────────────────────────────────────
+    # ── 6. Send sources + done ──────────────────────────────────────
     yield _sse_event(
         "sources",
         sources_text,
@@ -398,12 +429,21 @@ async def _stream_chat(body: ChatRequest) -> AsyncGenerator[str, None]:
 async def _non_stream_chat(body: ChatRequest) -> JSONResponse:
     """Generate a full RAG answer and return it as JSON.
 
+    Uses the two-phase persistence pattern.
     Returns the standard ``APIResponse[ChatResponse]`` envelope.
     """
     if body.use_agent:
         return await _non_stream_agent_chat(body)
 
-    # ── 1. Retrieve chunks ──────────────────────────────────────────
+    from app.core.history_store import create_pending_qa_record, complete_qa_record
+
+    # ── 1. Create pending record BEFORE generation ─────────────────
+    conv_id, record_id = await create_pending_qa_record(
+        conversation_id=body.conversation_id,
+        question=body.question,
+    )
+
+    # ── 2. Retrieve chunks ──────────────────────────────────────────
     try:
         chunks = await _retrieve_chunks(body.question, body.top_k)
     except HTTPException as exc:
@@ -412,7 +452,7 @@ async def _non_stream_chat(body: ChatRequest) -> JSONResponse:
             content=APIResponse.error(exc.status_code, exc.detail).model_dump(),
         )
 
-    # ── 2. Build prompt ─────────────────────────────────────────────
+    # ── 3. Build prompt ─────────────────────────────────────────────
     builder = RAGPromptBuilder()
     messages = builder.build(chunks, body.question)
     sources_text = format_sources(chunks)
@@ -423,7 +463,7 @@ async def _non_stream_chat(body: ChatRequest) -> JSONResponse:
         len(messages),
     )
 
-    # ── 3. Generate full answer ─────────────────────────────────────
+    # ── 4. Generate full answer ─────────────────────────────────────
     llm = LLMClient()
     try:
         answer = await llm.generate(messages)
@@ -434,19 +474,17 @@ async def _non_stream_chat(body: ChatRequest) -> JSONResponse:
             content=APIResponse.error(502, f"LLM error: {exc}").model_dump(),
         )
 
-    # ── 4. Persist to history ───────────────────────────────────────
-    try:
-        from app.core.history_store import save_qa_record
-        conv_id = await save_qa_record(
-            conversation_id=body.conversation_id,
-            question=body.question,
-            answer=answer,
-            source_chunks=chunks,
-            total_rounds=1,
-        )
-    except Exception as exc:
-        logger.warning("Failed to save QA record: {}", exc)
-        conv_id = body.conversation_id
+    # ── 5. Complete the pending record ──────────────────────────────
+    if answer.strip():
+        try:
+            await complete_qa_record(
+                record_id=record_id,
+                answer=answer,
+                source_chunks=chunks,
+                total_rounds=1,
+            )
+        except Exception as exc:
+            logger.warning("Failed to complete QA record: {}", exc)
 
     response = ChatResponse(
         answer=answer,

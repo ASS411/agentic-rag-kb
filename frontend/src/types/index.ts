@@ -1,4 +1,4 @@
-﻿export type ApiEnvelope<T> = {
+export type ApiEnvelope<T> = {
   success: boolean;
   code: number;
   message: string;
@@ -136,6 +136,14 @@ export type SSEErrorEvent = {
   timestamp?: string;
 };
 
+export type SSEMetaEvent = {
+  type: 'meta';
+  content?: string;
+  conversation_id?: string;
+  record_id?: string;
+  timestamp?: string;
+};
+
 export type StreamEvent =
   | SSEAgentStepEvent
   | SSEAnswerChunkEvent
@@ -143,7 +151,8 @@ export type StreamEvent =
   | SSETokenEvent
   | SSESourcesEvent
   | SSEDoneEvent
-  | SSEErrorEvent;
+  | SSEErrorEvent
+  | SSEMetaEvent;
 
 export type ChatRequest = {
   question: string;

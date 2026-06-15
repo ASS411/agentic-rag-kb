@@ -9,6 +9,10 @@ export type SSEState = {
   error: string;
   /** Agent thinking steps streamed from the backend. */
   thinkingSteps: ThinkingStep[];
+  /** Active conversation_id returned by the backend via meta event. */
+  conversationId: string | null;
+  /** Active record_id returned by the backend via meta event. */
+  recordId: string | null;
 };
 
 export type UseChatStreamOptions = {
@@ -24,6 +28,8 @@ export type UseChatStreamOptions = {
   onDone?: () => void;
   /** Called when an agent step arrives. */
   onAgentStep?: (step: ThinkingStep) => void;
+  /** Called when the meta event arrives (conversation_id + record_id). */
+  onMeta?: (conversationId: string, recordId: string) => void;
 };
 
 /**
@@ -38,12 +44,14 @@ export type UseChatStreamOptions = {
  * render the retrieval loop while the answer is still streaming.
  */
 export function useChatStream(options: UseChatStreamOptions) {
-  const { onStart, onToken, onSources, onError, onDone, onAgentStep } = options;
+  const { onStart, onToken, onSources, onError, onDone, onAgentStep, onMeta } = options;
 
   const [state, setState] = useState<SSEState>({
     streaming: false,
     error: '',
     thinkingSteps: [],
+    conversationId: null,
+    recordId: null,
   });
 
   const abortRef = useRef<{ abort: () => void } | null>(null);
@@ -70,13 +78,28 @@ export function useChatStream(options: UseChatStreamOptions) {
       hasAgentStepsRef.current = false;
       onStart(userMessage, assistantMessage);
 
-      const { abort, stream } = createChatStream({ question: trimmed });
+      const { abort, stream } = createChatStream({
+        question: trimmed,
+        conversation_id: state.conversationId ?? crypto.randomUUID(),
+      });
 
       abortRef.current = { abort };
 
       try {
         for await (const event of stream) {
           switch (event.type) {
+            case 'meta':
+              if (event.conversation_id || event.record_id) {
+                setState((s) => ({
+                  ...s,
+                  conversationId: event.conversation_id ?? s.conversationId,
+                  recordId: event.record_id ?? s.recordId,
+                }));
+                if (event.conversation_id && event.record_id) {
+                  onMeta?.(event.conversation_id, event.record_id);
+                }
+              }
+              break;
             case 'agent-step': {
               const step = {
                 step: event.step,
