@@ -16,6 +16,7 @@ Supports:
 
 from __future__ import annotations
 
+import asyncio
 import json
 from datetime import datetime, timezone
 from typing import AsyncGenerator
@@ -23,6 +24,7 @@ from typing import AsyncGenerator
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import JSONResponse, StreamingResponse
 from loguru import logger
+from pydantic import BaseModel
 
 from app.config import settings
 from app.core.embedder import Embedder, EmbedderError
@@ -46,6 +48,27 @@ from app.models.sse import (
 )
 
 router = APIRouter(prefix="/qa", tags=["qa"])
+
+
+class CancelQARecordRequest(BaseModel):
+    answer: str | None = None
+
+
+@router.post("/records/{record_id}/cancel")
+async def cancel_qa_record(
+    record_id: str,
+    body: CancelQARecordRequest | None = None,
+) -> APIResponse[dict[str, str]]:
+    """Mark an in-flight QA record as interrupted by the user."""
+    from app.core.history_store import fail_qa_record
+
+    try:
+        answer = body.answer if body else None
+        await fail_qa_record(record_id=record_id, answer=answer)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    return APIResponse.ok(data={"record_id": record_id, "status": "error"})
 
 
 # ---------------------------------------------------------------------------
@@ -241,6 +264,7 @@ async def _stream_agent_chat(body: ChatRequest):
     source_chunks: list[SearchChunk] = []
     total_rounds = 0
     failed = False
+    done_seen = False
 
     try:
         async for event_json in agent.run(
@@ -257,6 +281,7 @@ async def _stream_agent_chat(body: ChatRequest):
                 source_chunks = [SearchChunk.model_validate(c) for c in raw]
             elif et == "done":
                 total_rounds = int(event.get("total_rounds", 0))
+                done_seen = True
     except Exception as exc:
         failed = True
         logger.error("Agent loop error: {}", exc)
@@ -266,7 +291,7 @@ async def _stream_agent_chat(body: ChatRequest):
         # Always complete the record — catches GeneratorExit,
         # CancelledError, and normal completion in one place.
         full_answer = "".join(answer_parts)
-        if full_answer.strip() and not failed:
+        if full_answer.strip() and not failed and done_seen:
             try:
                 await complete_qa_record(
                     record_id=record_id,
@@ -280,9 +305,11 @@ async def _stream_agent_chat(body: ChatRequest):
                 logger.warning("Failed to complete agent QA record: {}", exc)
         else:
             try:
-                await fail_qa_record(
-                    record_id=record_id,
-                    answer=full_answer.strip() or None,
+                await asyncio.shield(
+                    fail_qa_record(
+                        record_id=record_id,
+                        answer=full_answer.strip() or None,
+                    )
                 )
             except BaseException as exc:
                 if not isinstance(exc, Exception):
@@ -425,10 +452,12 @@ async def _stream_chat(body: ChatRequest) -> AsyncGenerator[str, None]:
     llm = LLMClient()
     full_answer_parts: list[str] = []
     failed = False
+    done_seen = False
     try:
         async for token in llm.generate_stream(messages):
             full_answer_parts.append(token)
             yield _sse_event("token", token)
+        done_seen = True
     except LLMStreamError as exc:
         failed = True
         logger.error("Chat stream LLM error: {}", exc)
@@ -443,7 +472,7 @@ async def _stream_chat(body: ChatRequest) -> AsyncGenerator[str, None]:
         # Always complete the record — catches GeneratorExit,
         # CancelledError, and normal completion in one place.
         full_answer = "".join(full_answer_parts)
-        if full_answer.strip() and not failed:
+        if full_answer.strip() and not failed and done_seen:
             try:
                 await complete_qa_record(
                     record_id=record_id,
@@ -457,9 +486,11 @@ async def _stream_chat(body: ChatRequest) -> AsyncGenerator[str, None]:
                 logger.warning("Failed to complete QA stream record: {}", exc)
         else:
             try:
-                await fail_qa_record(
-                    record_id=record_id,
-                    answer=full_answer.strip() or None,
+                await asyncio.shield(
+                    fail_qa_record(
+                        record_id=record_id,
+                        answer=full_answer.strip() or None,
+                    )
                 )
             except BaseException as exc:
                 if not isinstance(exc, Exception):

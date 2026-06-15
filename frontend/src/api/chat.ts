@@ -63,3 +63,14 @@ export function createChatStream(
     stream: streamEvents(),
   };
 }
+
+export async function cancelChatRecord(
+  recordId: string,
+  answer: string,
+): Promise<void> {
+  await fetch(`${API_BASE}/qa/records/${recordId}/cancel`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ answer }),
+  });
+}

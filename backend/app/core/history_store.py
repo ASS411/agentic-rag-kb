@@ -147,6 +147,13 @@ async def complete_qa_record(
         record = result.scalar_one_or_none()
         if record is None:
             raise ValueError(f"QA record not found: {record_id}")
+        if record.status != "generating":
+            logger.info(
+                "Skip completing QA record because status is {}: record_id={}",
+                record.status,
+                record_id,
+            )
+            return str(record.conversation_id)
 
         record.answer = answer
         record.status = "complete"
@@ -182,6 +189,13 @@ async def fail_qa_record(
         record = result.scalar_one_or_none()
         if record is None:
             raise ValueError(f"QA record not found: {record_id}")
+        if record.status != "generating":
+            logger.info(
+                "Skip failing QA record because status is {}: record_id={}",
+                record.status,
+                record_id,
+            )
+            return str(record.conversation_id)
 
         record.answer = answer
         record.status = "error"

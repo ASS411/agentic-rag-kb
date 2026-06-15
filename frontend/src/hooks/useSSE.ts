@@ -1,6 +1,6 @@
 import { useCallback, useRef, useState } from 'react';
 import type { ChatMessage, SearchChunk, ThinkingStep } from '../types';
-import { createChatStream } from '../api/chat';
+import { cancelChatRecord, createChatStream } from '../api/chat';
 
 export type SSEState = {
   /** Whether a stream is currently in progress. */
@@ -57,6 +57,8 @@ export function useChatStream(options: UseChatStreamOptions) {
   });
 
   const abortRef = useRef<{ abort: () => void } | null>(null);
+  const activeRecordIdRef = useRef<string | null>(null);
+  const activeAnswerRef = useRef('');
   const hasAgentStepsRef = useRef(false);
 
   const submit = useCallback(
@@ -77,6 +79,8 @@ export function useChatStream(options: UseChatStreamOptions) {
       };
 
       setState((prev) => ({ ...prev, streaming: true, error: '', thinkingSteps: [] }));
+      activeRecordIdRef.current = null;
+      activeAnswerRef.current = '';
       hasAgentStepsRef.current = false;
       onStart(userMessage, assistantMessage);
 
@@ -98,6 +102,7 @@ export function useChatStream(options: UseChatStreamOptions) {
                   recordId: event.record_id ?? s.recordId,
                 }));
                 if (event.conversation_id && event.record_id) {
+                  activeRecordIdRef.current = event.record_id;
                   onMeta?.(event.conversation_id, event.record_id);
                 }
               }
@@ -126,11 +131,13 @@ export function useChatStream(options: UseChatStreamOptions) {
               break;
             }
             case 'answer-chunk':
+              activeAnswerRef.current += event.content;
               onToken(assistantId, event.content);
               break;
             case 'answer-done':
               break;
             case 'token':
+              activeAnswerRef.current += event.content;
               onToken(assistantId, event.content);
               break;
             case 'sources':
@@ -175,6 +182,8 @@ export function useChatStream(options: UseChatStreamOptions) {
       } finally {
         setState((s) => ({ ...s, streaming: false }));
         abortRef.current = null;
+        activeRecordIdRef.current = null;
+        activeAnswerRef.current = '';
         onDone?.();
       }
     },
@@ -182,6 +191,10 @@ export function useChatStream(options: UseChatStreamOptions) {
   );
 
   const stop = useCallback(() => {
+    const recordId = activeRecordIdRef.current;
+    if (recordId) {
+      void cancelChatRecord(recordId, activeAnswerRef.current);
+    }
     abortRef.current?.abort();
     setState((s) => ({ ...s, streaming: false }));
     abortRef.current = null;
