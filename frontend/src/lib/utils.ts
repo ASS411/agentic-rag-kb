@@ -66,6 +66,7 @@ export function parseSseBlock(block: string): StreamEvent | null {
         'sources',
         'done',
         'error',
+        'meta',
       ].includes(parsed.type)
     ) {
       return parsed;
