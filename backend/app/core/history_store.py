@@ -157,6 +157,24 @@ async def complete_qa_record(
 
 
 # ---------------------------------------------------------------------------
+# Concurrency guard
+# ---------------------------------------------------------------------------
+
+
+async def has_generating_record(conversation_id: str) -> bool:
+    """Return True if this conversation already has a record with
+    status='generating' (i.e. another request is currently streaming)."""
+    async with async_session_factory() as session:
+        result = await session.execute(
+            select(QARecordModel).where(
+                QARecordModel.conversation_id == conversation_id,
+                QARecordModel.status == "generating",
+            )
+        )
+        return result.scalar_one_or_none() is not None
+
+
+# ---------------------------------------------------------------------------
 # Legacy one-shot API (kept for backward compatibility)
 # ---------------------------------------------------------------------------
 

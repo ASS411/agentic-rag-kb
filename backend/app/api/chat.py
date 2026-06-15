@@ -77,6 +77,18 @@ def _sse_error(message: str) -> str:
     return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
 
 
+async def _check_concurrent(conversation_id: str | None) -> None:
+    """Raise 409 if a generating record already exists for this conversation."""
+    if not conversation_id:
+        return
+    from app.core.history_store import has_generating_record
+    if await has_generating_record(conversation_id):
+        raise HTTPException(
+            status_code=409,
+            detail="该对话的回答正在生成中，请等待完成后再发送新问题",
+        )
+
+
 # ---------------------------------------------------------------------------
 # Shared search → prompt pipeline
 # ---------------------------------------------------------------------------
@@ -212,7 +224,8 @@ async def _stream_agent_chat(body: ChatRequest):
     from app.core.agent import AgentLoop
     from app.core.history_store import create_pending_qa_record, complete_qa_record
 
-    # ── 1. Create pending record BEFORE generation ─────────────────
+    # ── 1. Check concurrency + create pending record ──────────────
+    await _check_concurrent(body.conversation_id)
     conv_id, record_id = await create_pending_qa_record(
         conversation_id=body.conversation_id,
         question=body.question,
@@ -268,7 +281,8 @@ async def _non_stream_agent_chat(body: ChatRequest) -> JSONResponse:
     from app.core.agent import AgentLoop
     from app.core.history_store import create_pending_qa_record, complete_qa_record
 
-    # ── 1. Create pending record BEFORE generation ─────────────────
+    # ── 1. Check concurrency + create pending record ──────────────
+    await _check_concurrent(body.conversation_id)
     conv_id, record_id = await create_pending_qa_record(
         conversation_id=body.conversation_id,
         question=body.question,
@@ -351,7 +365,8 @@ async def _stream_chat(body: ChatRequest) -> AsyncGenerator[str, None]:
     """
     from app.core.history_store import create_pending_qa_record, complete_qa_record
 
-    # ── 1. Create pending record BEFORE generation ─────────────────
+    # ── 1. Check concurrency + create pending record ──────────────
+    await _check_concurrent(body.conversation_id)
     conv_id, record_id = await create_pending_qa_record(
         conversation_id=body.conversation_id,
         question=body.question,
@@ -437,7 +452,8 @@ async def _non_stream_chat(body: ChatRequest) -> JSONResponse:
 
     from app.core.history_store import create_pending_qa_record, complete_qa_record
 
-    # ── 1. Create pending record BEFORE generation ─────────────────
+    # ── 1. Check concurrency + create pending record ──────────────
+    await _check_concurrent(body.conversation_id)
     conv_id, record_id = await create_pending_qa_record(
         conversation_id=body.conversation_id,
         question=body.question,
