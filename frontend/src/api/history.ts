@@ -69,3 +69,10 @@ export async function fetchHistory(
   );
   return payload.data;
 }
+
+export async function fetchSuggestions(): Promise<string[]> {
+  const payload = await readJson<ApiEnvelope<string[]>>(
+    await fetch(`${API_BASE}/qa/suggestions`),
+  );
+  return payload.data;
+}

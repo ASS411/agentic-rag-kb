@@ -5,7 +5,7 @@ import { Menu, Trash2 } from 'lucide-react';
 
 import type { ChatMessage, DocumentItem, UploadState } from './types';
 import { fetchDocuments, uploadFile } from './api/documents';
-import { fetchConversations, fetchHistory, deleteConversation, type QARecord } from './api/history';
+import { fetchConversations, fetchHistory, deleteConversation, fetchSuggestions, type QARecord } from './api/history';
 import { useQAStore } from './stores/qaStore';
 import { useSourceScroll } from './hooks/useSourceScroll';
 
@@ -29,12 +29,6 @@ import {
 } from './components/ui/alert-dialog';
 
 import { useChatStream } from './hooks/useSSE';
-
-const EXAMPLES = [
-  '总结这批文档里的关键结论，并列出依据。',
-  '这份资料中有哪些风险点需要优先处理？',
-  '把相关段落整理成一个三点行动清单。',
-];
 
 const PROCESSING_POLL_INTERVAL_MS = 1500;
 const PROCESSING_POLL_MAX_ATTEMPTS = 24;
@@ -125,6 +119,18 @@ export default function App() {
     staleTime: 15_000,
   });
   const conversations = convData?.items ?? [];
+
+  // ── Question suggestions ───────────────────────────────────────
+  const { data: suggestions } = useQuery({
+    queryKey: ['suggestions'],
+    queryFn: fetchSuggestions,
+    staleTime: 60_000,
+  });
+  const examples = suggestions ?? [
+    '总结这批文档里的关键结论，并列出依据。',
+    '这份资料中有哪些风险点需要优先处理？',
+    '把相关段落整理成一个三点行动清单。',
+  ];
 
   // ── Zustand QA state ──────────────────────────────────────────
   const messages = useQAStore((s) => s.messages);
@@ -361,7 +367,7 @@ export default function App() {
 
           <div className="message-scroll" ref={scrollContainerRef}>
             {messages.length === 0 ? (
-              <WelcomePanel examples={EXAMPLES} streaming={chat.streaming} onSubmitExample={handleQuestion} />
+              <WelcomePanel examples={examples} streaming={chat.streaming} onSubmitExample={handleQuestion} />
             ) : (
               <AnswerPanel
                 messages={messages}

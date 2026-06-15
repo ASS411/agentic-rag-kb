@@ -1,8 +1,10 @@
-"""History API — conversation list and Q&A record retrieval.
+"""History API — conversation list, Q&A record retrieval, and question suggestions.
 
 Provides:
 - GET /api/v1/qa/conversations — paginated conversation list
 - GET /api/v1/qa/history — paginated Q&A records for a conversation
+- GET /api/v1/qa/suggestions — contextual question suggestions based on uploaded docs
+- DELETE /api/v1/qa/conversations/{id} — delete a conversation
 """
 
 from __future__ import annotations
@@ -15,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from loguru import logger
 
 from app.db.mysql import get_db
+from app.models.document import DocumentModel
 from app.models.history import (
     ConversationListResponse,
     ConversationModel,
@@ -247,6 +250,49 @@ async def delete_conversation(
         len(records),
     )
     return APIResponse.ok(data=conversation_id, message="Conversation deleted")
+
+
+# ---------------------------------------------------------------------------
+# GET /api/v1/qa/suggestions
+# ---------------------------------------------------------------------------
+
+_GENERIC_SUGGESTIONS = [
+    "总结这批文档里的关键结论，并列出依据。",
+    "这份资料中有哪些风险点需要优先处理？",
+    "把相关段落整理成一个三点行动清单。",
+]
+
+_DOC_TEMPLATES = [
+    "总结「{name}」的核心观点",
+    "「{name}」中有哪些关键信息？",
+    "根据「{name}」的内容，列出三个要点",
+]
+
+
+@router.get("/suggestions")
+async def get_suggestions(
+    db: AsyncSession = Depends(get_db),
+) -> APIResponse[list[str]]:
+    """Return contextual question suggestions based on uploaded documents."""
+    docs_q = (
+        select(DocumentModel.file_name)
+        .where(DocumentModel.status == "ready")
+        .order_by(DocumentModel.created_at.desc())
+        .limit(3)
+    )
+    result = await db.execute(docs_q)
+    doc_names = result.scalars().all()
+
+    if not doc_names:
+        return APIResponse.ok(data=list(_GENERIC_SUGGESTIONS))
+
+    suggestions: list[str] = []
+    for i, name in enumerate(doc_names):
+        short = name.rsplit(".", 1)[0] if "." in name else name
+        template = _DOC_TEMPLATES[i % len(_DOC_TEMPLATES)]
+        suggestions.append(template.format(name=short))
+
+    return APIResponse.ok(data=suggestions)
 
 
 # ---------------------------------------------------------------------------
