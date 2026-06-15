@@ -16,6 +16,8 @@ export type SSEState = {
 };
 
 export type UseChatStreamOptions = {
+  /** Conversation selected by the parent component. */
+  conversationId: string | null;
   /** Called once when the stream starts.  Returns the assistant message id. */
   onStart: (userMessage: ChatMessage, assistantMessage: ChatMessage) => void;
   /** Called for every token event. */
@@ -44,7 +46,7 @@ export type UseChatStreamOptions = {
  * render the retrieval loop while the answer is still streaming.
  */
 export function useChatStream(options: UseChatStreamOptions) {
-  const { onStart, onToken, onSources, onError, onDone, onAgentStep, onMeta } = options;
+  const { conversationId, onStart, onToken, onSources, onError, onDone, onAgentStep, onMeta } = options;
 
   const [state, setState] = useState<SSEState>({
     streaming: false,
@@ -80,7 +82,7 @@ export function useChatStream(options: UseChatStreamOptions) {
 
       const { abort, stream } = createChatStream({
         question: trimmed,
-        conversation_id: state.conversationId ?? crypto.randomUUID(),
+        conversation_id: conversationId ?? undefined,
       });
 
       abortRef.current = { abort };
@@ -176,7 +178,7 @@ export function useChatStream(options: UseChatStreamOptions) {
         onDone?.();
       }
     },
-    [onStart, onToken, onSources, onError, onDone, onAgentStep],
+    [conversationId, onStart, onToken, onSources, onError, onDone, onAgentStep],
   );
 
   const stop = useCallback(() => {

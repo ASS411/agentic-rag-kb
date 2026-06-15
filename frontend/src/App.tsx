@@ -5,7 +5,7 @@ import { Menu } from 'lucide-react';
 
 import type { DocumentItem, UploadState } from './types';
 import { fetchDocuments, uploadFile } from './api/documents';
-import { fetchConversations } from './api/history';
+import { fetchConversations, fetchHistory, type QARecord } from './api/history';
 import { useQAStore } from './stores/qaStore';
 import { useSourceScroll } from './hooks/useSourceScroll';
 
@@ -35,6 +35,12 @@ function wait(ms: number) {
 
 function isDocumentReady(doc: DocumentItem) {
   return doc.status === 'ready' || doc.chunk_count > 0;
+}
+
+function historyAnswerText(record: QARecord) {
+  if (record.answer?.trim()) return record.answer;
+  if (record.status === 'generating') return '生成中...';
+  return '生成已中断';
 }
 
 export default function App() {
@@ -77,6 +83,7 @@ export default function App() {
   const bottomRef = useRef<HTMLDivElement | null>(null);
   const scrollContainerRef = useRef<HTMLDivElement | null>(null);
   const userScrolledUpRef = useRef(false);
+  const loadConversationRequestRef = useRef(0);
 
   // SourcePanel visible only when sources exist AND user hasn't manually hidden it
   const [sourcePanelPinned, setSourcePanelPinned] = useState(true);
@@ -87,34 +94,34 @@ export default function App() {
   // ── Upload state ──────────────────────────────────────────────
   const [upload, setUpload] = useState<UploadState>({ phase: 'idle', progress: 0, message: '支持 PDF、Markdown、TXT' });
 
+  // ── Active conversation ───────────────────────────────────────
+  const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
+
   // ── New conversation ──────────────────────────────────────────
   const handleNewConversation = useCallback(() => {
+    loadConversationRequestRef.current += 1;
     useQAStore.getState().reset();
     setActiveConversationId(null);
   }, []);
 
   // ── Load conversation from history ────────────────────────────
-  const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
   const loadConversation = useCallback(async (conversationId: string) => {
-    try {
-      const { fetchHistory } = await import('./api/history');
-      const result = await fetchHistory(conversationId);
-      // Filter out generating records (no answer yet)
-      const completed = result.items.filter(
-        (r) => !(!r.answer && r.status === 'generating'),
-      );
-      if (completed.length === 0) {
-        // All records are still generating — nothing to show yet
-        return;
-      }
+    const requestId = loadConversationRequestRef.current + 1;
+    loadConversationRequestRef.current = requestId;
+    setActiveConversationId(conversationId);
+    useQAStore.getState().reset();
+    useQAStore.getState().selectSource(null);
 
-      useQAStore.getState().reset();
+    try {
+      const result = await fetchHistory(conversationId);
+      if (loadConversationRequestRef.current !== requestId) return;
+
       // API returns newest first — reverse for chronological order
-      const records = [...completed].reverse();
+      const records = [...result.items].reverse();
       let lastSources: any[] = [];
       for (const record of records) {
         useQAStore.getState().addMessage({ id: crypto.randomUUID(), role: 'user', content: record.question });
-        useQAStore.getState().addMessage({ id: crypto.randomUUID(), role: 'assistant', content: record.answer || '（生成已中断）' });
+        useQAStore.getState().addMessage({ id: crypto.randomUUID(), role: 'assistant', content: historyAnswerText(record) });
         if (record.sources?.length) {
           lastSources = record.sources;
         }
@@ -124,16 +131,18 @@ export default function App() {
         const mapped = lastSources.map((s: any) => ({ ...s, content: s.content_snippet || '', doc_type: s.doc_type || 'pdf' }));
         useQAStore.getState().setSources(mapped as any, '');
       }
-      setActiveConversationId(conversationId);
       void qc.invalidateQueries({ queryKey: ['conversations'] });
     } catch (err) {
+      if (loadConversationRequestRef.current !== requestId) return;
       console.error('Failed to load conversation:', err);
     }
   }, [qc]);
 
   // ── Chat stream ───────────────────────────────────────────────
   const chat = useChatStream({
+    conversationId: activeConversationId,
     onStart: (userMsg, assistantMsg) => {
+      loadConversationRequestRef.current += 1;
       useQAStore.getState().addMessage(userMsg);
       useQAStore.getState().addMessage(assistantMsg);
       useQAStore.getState().setSources([], '');
@@ -316,6 +325,5 @@ export default function App() {
     </main>
   );
 }
-
 
 

@@ -12,7 +12,7 @@ The legacy save_qa_record is kept for backward compatibility.
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from loguru import logger
@@ -22,6 +22,15 @@ from app.config import settings
 from app.db.mysql import async_session_factory
 from app.models.history import ConversationModel, QARecordModel
 from app.models.search import SearchChunk
+
+
+STALE_GENERATING_MINUTES = 30
+
+
+def _active_generating_cutoff() -> datetime:
+    return datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(
+        minutes=STALE_GENERATING_MINUTES
+    )
 
 
 def _build_sources_json(source_chunks: list[SearchChunk] | None) -> list[dict[str, Any]] | None:
@@ -156,6 +165,33 @@ async def complete_qa_record(
     return str(record.conversation_id)
 
 
+async def fail_qa_record(
+    *,
+    record_id: str,
+    answer: str | None = None,
+) -> str:
+    """Mark a pending QA record as failed/interrupted.
+
+    This keeps aborted or empty generations from staying in ``generating``
+    forever, which would otherwise block the conversation and confuse history.
+    """
+    async with async_session_factory() as session:
+        result = await session.execute(
+            select(QARecordModel).where(QARecordModel.record_id == record_id)
+        )
+        record = result.scalar_one_or_none()
+        if record is None:
+            raise ValueError(f"QA record not found: {record_id}")
+
+        record.answer = answer
+        record.status = "error"
+        await session.commit()
+
+        logger.info("QA record marked failed: record_id={}", record_id)
+
+    return str(record.conversation_id)
+
+
 # ---------------------------------------------------------------------------
 # Concurrency guard
 # ---------------------------------------------------------------------------
@@ -164,11 +200,13 @@ async def complete_qa_record(
 async def has_generating_record(conversation_id: str) -> bool:
     """Return True if this conversation already has a record with
     status='generating' (i.e. another request is currently streaming)."""
+    cutoff = _active_generating_cutoff()
     async with async_session_factory() as session:
         result = await session.execute(
             select(QARecordModel).where(
                 QARecordModel.conversation_id == conversation_id,
                 QARecordModel.status == "generating",
+                QARecordModel.created_at >= cutoff,
             )
         )
         return result.scalar_one_or_none() is not None

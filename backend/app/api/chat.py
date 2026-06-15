@@ -222,7 +222,11 @@ async def _stream_agent_chat(body: ChatRequest):
     completes it after generation finishes (two-phase pattern).
     """
     from app.core.agent import AgentLoop
-    from app.core.history_store import create_pending_qa_record, complete_qa_record
+    from app.core.history_store import (
+        complete_qa_record,
+        create_pending_qa_record,
+        fail_qa_record,
+    )
 
     # ── 1. Check concurrency + create pending record ──────────────
     await _check_concurrent(body.conversation_id)
@@ -236,6 +240,7 @@ async def _stream_agent_chat(body: ChatRequest):
     answer_parts: list[str] = []
     source_chunks: list[SearchChunk] = []
     total_rounds = 0
+    failed = False
 
     try:
         async for event_json in agent.run(
@@ -253,6 +258,7 @@ async def _stream_agent_chat(body: ChatRequest):
             elif et == "done":
                 total_rounds = int(event.get("total_rounds", 0))
     except Exception as exc:
+        failed = True
         logger.error("Agent loop error: {}", exc)
         yield _sse_error(f"Agent error: {exc}")
         return
@@ -260,7 +266,7 @@ async def _stream_agent_chat(body: ChatRequest):
         # Always complete the record — catches GeneratorExit,
         # CancelledError, and normal completion in one place.
         full_answer = "".join(answer_parts)
-        if full_answer.strip():
+        if full_answer.strip() and not failed:
             try:
                 await complete_qa_record(
                     record_id=record_id,
@@ -273,7 +279,15 @@ async def _stream_agent_chat(body: ChatRequest):
                     raise  # re-raise GeneratorExit / CancelledError
                 logger.warning("Failed to complete agent QA record: {}", exc)
         else:
-            logger.warning("Empty agent answer — record stays as generating: {}", record_id)
+            try:
+                await fail_qa_record(
+                    record_id=record_id,
+                    answer=full_answer.strip() or None,
+                )
+            except BaseException as exc:
+                if not isinstance(exc, Exception):
+                    raise
+                logger.warning("Failed to mark agent QA record failed: {}", exc)
 
 
 async def _non_stream_agent_chat(body: ChatRequest) -> JSONResponse:
@@ -282,7 +296,11 @@ async def _non_stream_agent_chat(body: ChatRequest) -> JSONResponse:
     Uses the two-phase persistence pattern.
     """
     from app.core.agent import AgentLoop
-    from app.core.history_store import create_pending_qa_record, complete_qa_record
+    from app.core.history_store import (
+        complete_qa_record,
+        create_pending_qa_record,
+        fail_qa_record,
+    )
 
     # ── 1. Check concurrency + create pending record ──────────────
     await _check_concurrent(body.conversation_id)
@@ -314,12 +332,14 @@ async def _non_stream_agent_chat(body: ChatRequest) -> JSONResponse:
                 ]
             elif event_type == "error":
                 message = str(event.get("content", "Agent error"))
+                await fail_qa_record(record_id=record_id)
                 return JSONResponse(
                     status_code=502,
                     content=APIResponse.error(502, message).model_dump(),
                 )
     except Exception as exc:
         logger.error("Agent non-stream error: {}", exc)
+        await fail_qa_record(record_id=record_id)
         return JSONResponse(
             status_code=502,
             content=APIResponse.error(502, f"Agent error: {exc}").model_dump(),
@@ -336,6 +356,8 @@ async def _non_stream_agent_chat(body: ChatRequest) -> JSONResponse:
             )
         except Exception as exc:
             logger.warning("Failed to complete agent QA record: {}", exc)
+    else:
+        await fail_qa_record(record_id=record_id)
 
     response = ChatResponse(
         answer=full_answer,
@@ -366,7 +388,11 @@ async def _stream_chat(body: ChatRequest) -> AsyncGenerator[str, None]:
         4. ``done`` event — final marker
         5. ``error`` event — on failure (terminates stream)
     """
-    from app.core.history_store import create_pending_qa_record, complete_qa_record
+    from app.core.history_store import (
+        complete_qa_record,
+        create_pending_qa_record,
+        fail_qa_record,
+    )
 
     # ── 1. Check concurrency + create pending record ──────────────
     await _check_concurrent(body.conversation_id)
@@ -380,6 +406,7 @@ async def _stream_chat(body: ChatRequest) -> AsyncGenerator[str, None]:
     try:
         chunks = await _retrieve_chunks(body.question, body.top_k)
     except HTTPException as exc:
+        await fail_qa_record(record_id=record_id)
         yield _sse_error(exc.detail)
         return
 
@@ -397,15 +424,18 @@ async def _stream_chat(body: ChatRequest) -> AsyncGenerator[str, None]:
     # ── 4. Stream tokens ────────────────────────────────────────────
     llm = LLMClient()
     full_answer_parts: list[str] = []
+    failed = False
     try:
         async for token in llm.generate_stream(messages):
             full_answer_parts.append(token)
             yield _sse_event("token", token)
     except LLMStreamError as exc:
+        failed = True
         logger.error("Chat stream LLM error: {}", exc)
         yield _sse_error(f"LLM stream failed: {exc}")
         return
     except LLMError as exc:
+        failed = True
         logger.error("Chat stream LLM error: {}", exc)
         yield _sse_error(f"LLM error: {exc}")
         return
@@ -413,7 +443,7 @@ async def _stream_chat(body: ChatRequest) -> AsyncGenerator[str, None]:
         # Always complete the record — catches GeneratorExit,
         # CancelledError, and normal completion in one place.
         full_answer = "".join(full_answer_parts)
-        if full_answer.strip():
+        if full_answer.strip() and not failed:
             try:
                 await complete_qa_record(
                     record_id=record_id,
@@ -425,6 +455,16 @@ async def _stream_chat(body: ChatRequest) -> AsyncGenerator[str, None]:
                 if not isinstance(exc, Exception):
                     raise  # re-raise GeneratorExit / CancelledError
                 logger.warning("Failed to complete QA stream record: {}", exc)
+        else:
+            try:
+                await fail_qa_record(
+                    record_id=record_id,
+                    answer=full_answer.strip() or None,
+                )
+            except BaseException as exc:
+                if not isinstance(exc, Exception):
+                    raise
+                logger.warning("Failed to mark QA stream record failed: {}", exc)
 
     # ── 6. Send sources + done ──────────────────────────────────────
     yield _sse_event(
@@ -456,7 +496,11 @@ async def _non_stream_chat(body: ChatRequest) -> JSONResponse:
     if body.use_agent:
         return await _non_stream_agent_chat(body)
 
-    from app.core.history_store import create_pending_qa_record, complete_qa_record
+    from app.core.history_store import (
+        complete_qa_record,
+        create_pending_qa_record,
+        fail_qa_record,
+    )
 
     # ── 1. Check concurrency + create pending record ──────────────
     await _check_concurrent(body.conversation_id)
@@ -469,6 +513,7 @@ async def _non_stream_chat(body: ChatRequest) -> JSONResponse:
     try:
         chunks = await _retrieve_chunks(body.question, body.top_k)
     except HTTPException as exc:
+        await fail_qa_record(record_id=record_id)
         return JSONResponse(
             status_code=exc.status_code,
             content=APIResponse.error(exc.status_code, exc.detail).model_dump(),
@@ -491,6 +536,7 @@ async def _non_stream_chat(body: ChatRequest) -> JSONResponse:
         answer = await llm.generate(messages)
     except LLMError as exc:
         logger.error("Chat non-stream LLM error: {}", exc)
+        await fail_qa_record(record_id=record_id)
         return JSONResponse(
             status_code=502,
             content=APIResponse.error(502, f"LLM error: {exc}").model_dump(),
@@ -507,6 +553,8 @@ async def _non_stream_chat(body: ChatRequest) -> JSONResponse:
             )
         except Exception as exc:
             logger.warning("Failed to complete QA record: {}", exc)
+    else:
+        await fail_qa_record(record_id=record_id)
 
     response = ChatResponse(
         answer=answer,
