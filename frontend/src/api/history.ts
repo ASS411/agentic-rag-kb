@@ -22,7 +22,8 @@ export type QARecord = {
   record_id: string;
   conversation_id: string;
   question: string;
-  answer: string;
+  answer: string | null;
+  status: string | null;
   sources: Array<Record<string, unknown>>;
   agent_steps: Array<Record<string, unknown>>;
   total_rounds: number | null;

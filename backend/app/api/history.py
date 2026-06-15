@@ -153,15 +153,13 @@ async def list_history(
             detail=f"Conversation not found: {conversation_id}",
         )
 
-    valid_filter = _not_stale_generating_filter()
-
-    # Count valid records (exclude stale generating)
+    # Exclude ALL generating records (answer is null, not useful in history)
     count_q = (
         select(func.count())
         .select_from(QARecordModel)
         .where(
             QARecordModel.conversation_id == conversation_id,
-            valid_filter,
+            QARecordModel.status != "generating",
         )
     )
     count_result = await db.execute(count_q)
@@ -169,12 +167,12 @@ async def list_history(
 
     offset = (page - 1) * size
 
-    # Fetch valid records (exclude stale generating)
+    # Fetch completed records only (exclude generating)
     records_q = (
         select(QARecordModel)
         .where(
             QARecordModel.conversation_id == conversation_id,
-            valid_filter,
+            QARecordModel.status != "generating",
         )
         .order_by(desc(QARecordModel.created_at))
         .limit(size)

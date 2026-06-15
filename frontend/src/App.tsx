@@ -104,7 +104,11 @@ export default function App() {
     let lastSources: any[] = [];
     for (const record of records) {
       useQAStore.getState().addMessage({ id: crypto.randomUUID(), role: 'user', content: record.question });
-      useQAStore.getState().addMessage({ id: crypto.randomUUID(), role: 'assistant', content: record.answer });
+      // Skip generating records with no answer (interrupted / stale)
+      if (!record.answer && record.status === 'generating') {
+        continue;
+      }
+      useQAStore.getState().addMessage({ id: crypto.randomUUID(), role: 'assistant', content: record.answer || '（生成已中断）' });
       if (record.sources?.length) {
         lastSources = record.sources;
       }
