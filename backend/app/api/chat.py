@@ -256,8 +256,12 @@ async def _stream_agent_chat(body: ChatRequest):
         logger.error("Agent loop error: {}", exc)
         yield _sse_error(f"Agent error: {exc}")
         return
+    except GeneratorExit:
+        # Client disconnected during agent loop — partial answer is
+        # still useful; fall through to complete the pending record.
+        pass
 
-    # ── 2. Complete the pending record ────────────────────────────
+    # ── 2. Complete the pending record (always, even on disconnect) ─
     full_answer = "".join(answer_parts)
     if full_answer.strip():
         try:
@@ -406,8 +410,12 @@ async def _stream_chat(body: ChatRequest) -> AsyncGenerator[str, None]:
         logger.error("Chat stream LLM error: {}", exc)
         yield _sse_error(f"LLM error: {exc}")
         return
+    except GeneratorExit:
+        # Client disconnected — partial answer is still
+        # useful; fall through to complete the pending record.
+        pass
 
-    # ── 5. Complete the pending record ──────────────────────────────
+    # ── 5. Complete the pending record (always, even on disconnect) ─
     full_answer = "".join(full_answer_parts)
     if full_answer.strip():
         try:
