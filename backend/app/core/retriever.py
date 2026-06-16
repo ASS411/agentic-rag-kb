@@ -19,10 +19,12 @@ Examples::
 
 from __future__ import annotations
 
+import asyncio
 from pydantic import BaseModel, Field
 
 from app.config import settings
 from app.core.embedder import Embedder
+from app.core.bm25_retriever import get_bm25, BM25Retriever, bm25_search_async
 from app.db.chroma import ChromaStore
 from app.models.search import SearchChunk
 
@@ -48,6 +50,10 @@ class RetrievalResult(BaseModel):
     reranked: bool = Field(
         default=False,
         description="Whether the result pool was re-ranked by a cross-encoder",
+    )
+    hybrid: bool = Field(
+        default=False,
+        description="Whether BM25+vector hybrid search was used",
     )
 
 
@@ -168,10 +174,12 @@ class Retriever:
         embedder: Embedder | None = None,
         chroma: ChromaStore | None = None,
         reranker=None,
+        bm25: BM25Retriever | None = None,
     ) -> None:
         self._embedder = embedder or Embedder()
         self._chroma = chroma or ChromaStore()
         self._reranker = reranker  # None → created on demand
+        self._bm25 = bm25  # None → use singleton when hybrid is enabled
 
     # ------------------------------------------------------------------
     # Public API
@@ -184,6 +192,8 @@ class Retriever:
         top_k_recall: int | None = None,
         top_k_rerank: int | None = None,
         rerank: bool = False,
+        hybrid: bool = False,
+        bm25_weight: float = 0.5,
     ) -> RetrievalResult:
         """Retrieve and optionally re-rank chunks for *queries*.
 
@@ -202,6 +212,13 @@ class Retriever:
         rerank:
             When ``True``, the deduplicated candidate pool is re-scored
             by the cross-encoder and trimmed to *top_k_rerank*.
+        hybrid:
+            When ``True``, run BM25 keyword search in parallel with
+            vector search and fuse results via Reciprocal Rank Fusion
+            (RRF).  Default: ``False``.
+        bm25_weight:
+            Weight of BM25 in RRF fusion (0–1).  Only used when
+            *hybrid* is ``True``.  Default: 0.5.
 
         Returns
         -------
@@ -211,16 +228,21 @@ class Retriever:
             return RetrievalResult()
 
         if top_k_recall is None:
-            top_k_recall = settings.agent.top_k_recall
+            top_k_recall = (
+                settings.agent.top_k_recall_hybrid
+                if hybrid
+                else settings.agent.top_k_recall
+            )
         if top_k_rerank is None:
             top_k_rerank = settings.agent.top_k_rerank
 
         # ── 1. Embed all queries ──────────────────────────────────
         logger.debug(
-            "Retriever: embedding {} queries, top_k_recall={}, rerank={}",
+            "Retriever: embedding {} queries, top_k_recall={}, rerank={}, hybrid={}",
             len(queries),
             top_k_recall,
             rerank,
+            hybrid,
         )
         query_embeddings = await self._embedder.embed_batch(queries)
 
@@ -262,6 +284,28 @@ class Retriever:
                 if c.chunk_id not in candidates or c.score > candidates[c.chunk_id].score:
                     candidates[c.chunk_id] = c
 
+        # ── 3b. BM25 search (hybrid mode, parallel with vector) ───
+        if hybrid:
+            bm25 = self._bm25 or get_bm25()
+            bm25_candidates = await _run_bm25_for_queries(
+                bm25, queries, top_k=top_k_recall
+            )
+            total_recalled += sum(len(v) for v in bm25_candidates)
+
+            # ── RRF fusion ────────────────────────────────────────
+            candidates = _rrf_fuse(
+                vector_candidates=candidates,
+                bm25_candidates=bm25_candidates,
+                queries=queries,
+                bm25_weight=bm25_weight,
+            )
+            logger.debug(
+                "Retriever hybrid fusion: {} candidates after RRF, "
+                "weight_bm25={}",
+                len(candidates),
+                bm25_weight,
+            )
+
         dedup_chunks = list(candidates.values())
 
         logger.debug(
@@ -281,6 +325,7 @@ class Retriever:
                 chunks=dedup_chunks,
                 total_recalled=total_recalled,
                 reranked=True,
+                hybrid=hybrid,
             )
 
         # ── 5. Sort by score descending when not reranked ─────────
@@ -290,6 +335,7 @@ class Retriever:
             chunks=dedup_chunks[:top_k_rerank] if not rerank else dedup_chunks,
             total_recalled=total_recalled,
             reranked=False,
+            hybrid=hybrid,
         )
 
     # ------------------------------------------------------------------
@@ -314,3 +360,135 @@ class Retriever:
 
         # Convert back to SearchChunk
         return [_chunk_to_searchchunk(c) for c in reranked]
+
+
+# ---------------------------------------------------------------------------
+# BM25 / RRF helpers (hybrid search)
+# ---------------------------------------------------------------------------
+
+_RRF_K: int = 60
+"""RRF smoothing constant — higher values dampen rank differences."""
+
+
+async def _run_bm25_for_queries(
+    bm25: BM25Retriever,
+    queries: list[str],
+    top_k: int,
+) -> list[list[tuple[str, float]]]:
+    """Run BM25 search for all *queries* concurrently in a thread pool.
+
+    Parameters
+    ----------
+    bm25:
+        The ``BM25Retriever`` instance.
+    queries:
+        One or more search query strings.
+    top_k:
+        Max results per query.
+
+    Returns
+    -------
+    list[list[tuple[str, float]]]
+        Per-query list of ``(chunk_id, bm25_score)`` pairs.
+    """
+    if bm25.is_empty() or not queries:
+        return [[] for _ in queries]
+
+    tasks = [bm25_search_async(bm25, q, top_k) for q in queries]
+    results = await asyncio.gather(*tasks)
+    return list(results)
+
+
+def _rrf_fuse(
+    vector_candidates: dict[str, SearchChunk],
+    bm25_candidates: list[list[tuple[str, float]]],
+    queries: list[str],
+    bm25_weight: float = 0.5,
+) -> dict[str, SearchChunk]:
+    """Fuse vector and BM25 results using Reciprocal Rank Fusion (RRF).
+
+    RRF score for chunk *c*::
+
+        rrf(c) = (1 - w) * Ʃ 1/(k + rank_in_vector)
+               +    w    * Ʃ 1/(k + rank_in_bm25)
+
+    where *k* = 60 and *w* = *bm25_weight*.
+
+    Parameters
+    ----------
+    vector_candidates:
+        ``chunk_id -> SearchChunk`` mapping from vector search.
+    bm25_candidates:
+        Per-query BM25 results as ``(chunk_id, score)`` pairs.
+    queries:
+        Original query list (used to weight BM25 per-query contributions).
+    bm25_weight:
+        Weight for BM25 in the fusion (0–1).
+
+    Returns
+    -------
+    dict[str, SearchChunk]
+        Fused candidates keyed by chunk_id, with RRF scores stored
+        in each ``SearchChunk.score`` field.
+    """
+    if bm25_weight < 0.0 or bm25_weight > 1.0:
+        bm25_weight = max(0.0, min(1.0, bm25_weight))
+
+    vector_weight = 1.0 - bm25_weight
+
+    # ── Build a temporary id -> SearchChunk map for BM25 results ───
+    bm25_id_map: dict[str, SearchChunk] = {}
+    for qi, per_query_results in enumerate(bm25_candidates):
+        for rank_i, (chunk_id, _bm25_score) in enumerate(per_query_results):
+            rrf_contrib = 1.0 / (_RRF_K + rank_i + 1)
+            if chunk_id not in bm25_id_map:
+                # Create a lightweight placeholder — content etc. will
+                # come from vector_candidates or remain empty.
+                bm25_id_map[chunk_id] = SearchChunk(
+                    chunk_id=chunk_id,
+                    content="",
+                    score=0.0,
+                    doc_id="",
+                    doc_name="",
+                    doc_type="",
+                    page=1,
+                    chunk_index=0,
+                    metadata={},
+                )
+            bm25_id_map[chunk_id].score += rrf_contrib
+
+    # ── Compute RRF scores ─────────────────────────────────────────
+    fused: dict[str, SearchChunk] = {}
+
+    # Collect all chunk_ids from both sources
+    all_ids = set(vector_candidates.keys()) | set(bm25_id_map.keys())
+
+    for chunk_id in all_ids:
+        rrf_score = 0.0
+
+        # Vector contribution — assign rank based on sorted order
+        if chunk_id in vector_candidates:
+            # Determine rank among all vector results (sorted by score desc)
+            sorted_vector = sorted(
+                vector_candidates.values(),
+                key=lambda c: c.score,
+                reverse=True,
+            )
+            for rank, sc in enumerate(sorted_vector):
+                if sc.chunk_id == chunk_id:
+                    rrf_score += vector_weight * (1.0 / (_RRF_K + rank + 1))
+                    break
+
+        # BM25 contribution already accumulated above
+        if chunk_id in bm25_id_map:
+            rrf_score += bm25_weight * bm25_id_map[chunk_id].score
+
+        # Use the vector result's full data if available, otherwise BM25 placeholder
+        if chunk_id in vector_candidates:
+            fused[chunk_id] = vector_candidates[chunk_id]
+            fused[chunk_id].score = round(rrf_score, 6)
+        else:
+            fused[chunk_id] = bm25_id_map[chunk_id]
+            fused[chunk_id].score = round(rrf_score, 6)
+
+    return fused

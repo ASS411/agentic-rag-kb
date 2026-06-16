@@ -213,6 +213,23 @@ class AgentSettings(BaseSettings):
     top_k_rerank: int = Field(default=5, ge=1, le=50)
     chunk_size: int = Field(default=800, ge=100, le=4096)
     chunk_overlap: int = Field(default=150, ge=0)
+    # Hybrid search (BM25 + vector)
+    enable_hybrid: bool = Field(
+        default=True,
+        description="Enable BM25+vector hybrid search via RRF fusion",
+    )
+    bm25_weight: float = Field(
+        default=0.5,
+        ge=0.0,
+        le=1.0,
+        description="Weight of BM25 in the RRF fusion (0 = pure vector, 1 = pure BM25)",
+    )
+    top_k_recall_hybrid: int = Field(
+        default=50,
+        ge=1,
+        le=200,
+        description="Larger recall pool for hybrid search (per source)",
+    )
 
     model_config = SettingsConfigDict(env_prefix="AGENT_", extra="ignore")
 

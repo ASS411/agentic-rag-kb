@@ -276,6 +276,56 @@ class ChromaStore:
         """Return the total number of chunks in the collection."""
         return self._collection.count()
 
+    def get_all_chunks(self) -> list[Chunk]:
+        """Retrieve all chunks from the collection.
+
+        Returns a list of ``Chunk`` objects reconstructed from Chroma's
+        stored data.  Useful for rebuilding the BM25 index.
+
+        Returns
+        -------
+        list[Chunk]
+            All chunks currently stored in the collection.
+        """
+        total = self._collection.count()
+        if total == 0:
+            return []
+
+        result = self._collection.get(
+            include=["documents", "metadatas"],
+        )
+
+        ids: list[str] = result.get("ids", []) or []
+        documents: list[str] = result.get("documents", []) or []
+        metadatas: list[dict] = result.get("metadatas", []) or []
+
+        from app.models.document import DocType
+
+        chunks: list[Chunk] = []
+        for i in range(len(ids)):
+            meta = metadatas[i] if i < len(metadatas) else {}
+            dt_str = meta.get("doc_type", "txt")
+            try:
+                dt = DocType(dt_str)
+            except ValueError:
+                dt = DocType.TXT
+
+            chunks.append(
+                Chunk(
+                    id=ids[i],
+                    content=documents[i] if i < len(documents) else "",
+                    doc_id=meta.get("doc_id", ""),
+                    doc_name=meta.get("doc_name", ""),
+                    doc_type=dt,
+                    page=meta.get("page", 1),
+                    chunk_index=meta.get("chunk_index", 0),
+                    char_count=meta.get("char_count", 0),
+                    metadata=meta,
+                )
+            )
+
+        return chunks
+
     def collection_info(self) -> dict[str, Any]:
         """Return collection metadata useful for health checks.
 

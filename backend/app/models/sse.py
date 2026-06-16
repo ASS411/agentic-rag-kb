@@ -20,6 +20,23 @@ from pydantic import BaseModel, Field
 from app.models.search import SearchChunk
 
 
+class CitationResultInfo(BaseModel):
+    """Structured citation parsing result embedded in the sources event."""
+
+    has_citations: bool = Field(
+        default=False,
+        description="Whether the LLM answer contained any verified citations",
+    )
+    referenced_chunk_ids: list[str] = Field(
+        default_factory=list,
+        description="Chunk IDs that were actually cited by the LLM",
+    )
+    orphan_count: int = Field(
+        default=0,
+        description="Number of citation markers that did not resolve to any chunk",
+    )
+
+
 class SSEStepEvent(BaseModel):
     """Emitted when the agent enters a new step in the pipeline."""
 
@@ -87,6 +104,10 @@ class SSESourcesEvent(BaseModel):
     source_chunks: list[SearchChunk] = Field(
         default_factory=list,
         description="Structured chunks used by the answer/source panel",
+    )
+    citation_result: CitationResultInfo | None = Field(
+        default=None,
+        description="Citation parsing result with verification info",
     )
     timestamp: str | None = Field(
         default=None,

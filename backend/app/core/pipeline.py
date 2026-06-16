@@ -9,11 +9,13 @@ into a single ``run()`` call.
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 
 from loguru import logger
 
 from app.core.chunker import Chunk, Chunker
+from app.core.bm25_retriever import get_bm25
 from app.core.embedder import Embedder
 from app.core.parsers import parse_document
 from app.db.chroma import ChromaStore
@@ -173,6 +175,9 @@ class IngestionPipeline:
         # ── 4. Store ────────────────────────────────────────────────
         logger.info("Pipeline [{}]: writing {} chunks to Chroma", doc_id, len(chunks))
         self._chroma.add(chunks=chunks, embeddings=embeddings)
+
+        # ── 5. Rebuild BM25 index ────────────────────────────────
+        await _rebuild_bm25_from_chroma(self._chroma)
 
         logger.info(
             "Pipeline [{}]: ingestion complete — document={!r}, "

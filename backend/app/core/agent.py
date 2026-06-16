@@ -452,6 +452,8 @@ class AgentLoop:
         max_rounds = max_rounds or settings.agent.max_rounds
         top_k_recall = settings.agent.top_k_recall
         top_k_rerank = settings.agent.top_k_rerank
+        enable_hybrid = settings.agent.enable_hybrid
+        bm25_weight = settings.agent.bm25_weight
         retriever = Retriever()
         reranker = Reranker()
 
@@ -469,14 +471,16 @@ class AgentLoop:
                 timestamp=datetime.now(timezone.utc).isoformat(),
             ).model_dump_json(exclude_none=True)
 
-        def _src(content, ids=None):
+        def _src(content, ids=None, *, citation_result=None, source_chunks=None):
+            chunks = source_chunks if source_chunks is not None else final_chunks
             return SSESourcesEvent(
                 content=content,
                 chunk_ids=ids or [],
                 source_chunks=[
                     chunk.model_dump(mode="json")
-                    for chunk in final_chunks
+                    for chunk in chunks
                 ],
+                citation_result=citation_result,
                 timestamp=datetime.now(timezone.utc).isoformat(),
             ).model_dump_json(exclude_none=True)
 
@@ -524,7 +528,8 @@ class AgentLoop:
                 query_count=len(queries),
             )
             rr = await retriever.retrieve(
-                queries, top_k_recall=top_k_recall, rerank=False)
+                queries, top_k_recall=top_k_recall, rerank=False,
+                hybrid=enable_hybrid, bm25_weight=bm25_weight)
             yield _evt(
                 "search",
                 message=f"Retrieved {rr.total_recalled} chunks",
@@ -593,16 +598,45 @@ class AgentLoop:
 
         builder = RAGPromptBuilder()
         messages = builder.build(final_chunks, question)
+
+        full_answer = ""
         try:
             async for token in self._llm.generate_stream(messages):
+                full_answer += token
                 yield _ans(token)
         except LLMError as exc:
             yield _error(f"LLM error: {exc}")
             return
 
-        # SOURCES + DONE
-        sources_text = format_sources(final_chunks)
-        chunk_ids = [c.chunk_id for c in final_chunks]
-        yield _src(sources_text, chunk_ids)
+        # Parse citations from the full answer
+        from app.core.citation import CitationParser, CitationResult
+        parser = CitationParser()
+        citation_result: CitationResult = parser.parse(full_answer, final_chunks)
+
+        # Build sources based on verified citations
+        if citation_result.citations:
+            cited_chunks = [
+                c for c in final_chunks
+                if c.chunk_id in citation_result.cited_chunk_ids
+            ]
+            sources_text = format_sources(cited_chunks)
+            chunk_ids = list(citation_result.cited_chunk_ids)
+            source_chunks = cited_chunks
+        else:
+            # Fallback: use all chunks as before
+            sources_text = format_sources(final_chunks)
+            chunk_ids = [c.chunk_id for c in final_chunks]
+            source_chunks = final_chunks
+
+        yield _src(
+            sources_text,
+            chunk_ids,
+            citation_result={
+                "has_citations": len(citation_result.citations) > 0,
+                "referenced_chunk_ids": list(citation_result.cited_chunk_ids),
+                "orphan_count": citation_result.orphan_count,
+            },
+            source_chunks=source_chunks,
+        )
         yield _done()
         yield _terminal_done()
