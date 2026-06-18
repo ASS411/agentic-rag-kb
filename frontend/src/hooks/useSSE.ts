@@ -1,0 +1,208 @@
+import { useCallback, useRef, useState } from 'react';
+import type { ChatMessage, SearchChunk, ThinkingStep } from '../types';
+import { cancelChatRecord, createChatStream } from '../api/chat';
+
+export type SSEState = {
+  /** Whether a stream is currently in progress. */
+  streaming: boolean;
+  /** Last error message from the chat pipeline. */
+  error: string;
+  /** Agent thinking steps streamed from the backend. */
+  thinkingSteps: ThinkingStep[];
+  /** Active conversation_id returned by the backend via meta event. */
+  conversationId: string | null;
+  /** Active record_id returned by the backend via meta event. */
+  recordId: string | null;
+};
+
+export type UseChatStreamOptions = {
+  /** Conversation selected by the parent component. */
+  conversationId: string | null;
+  /** Called once when the stream starts.  Returns the assistant message id. */
+  onStart: (userMessage: ChatMessage, assistantMessage: ChatMessage) => void;
+  /** Called for every token event. */
+  onToken: (assistantId: string, token: string) => void;
+  /** Called when sources event is received. */
+  onSources: (sourcesText: string, sourceChunks: SearchChunk[]) => void;
+  /** Called when an error occurs (before the error is recorded in state). */
+  onError?: (assistantId: string, message: string) => void;
+  /** Called when the stream finishes (success or failure). */
+  onDone?: () => void;
+  /** Called when an agent step arrives. */
+  onAgentStep?: (step: ThinkingStep) => void;
+  /** Called when the meta event arrives (conversation_id + record_id). */
+  onMeta?: (conversationId: string, recordId: string) => void;
+};
+
+/**
+ * Hook that manages the full chat flow: search → SSE stream → state updates.
+ *
+ * Returns the current state plus a `submit` function that starts a new turn.
+ *
+ * The hook does **not** own the messages array — it uses callbacks so the
+ * calling component stays in control of its own message storage.
+ *
+ * Agent steps are emitted separately from answer tokens so the caller can
+ * render the retrieval loop while the answer is still streaming.
+ */
+export function useChatStream(options: UseChatStreamOptions) {
+  const { conversationId, onStart, onToken, onSources, onError, onDone, onAgentStep, onMeta } = options;
+
+  const [state, setState] = useState<SSEState>({
+    streaming: false,
+    error: '',
+    thinkingSteps: [],
+    conversationId: null,
+    recordId: null,
+  });
+
+  const abortRef = useRef<{ abort: () => void } | null>(null);
+  const activeRecordIdRef = useRef<string | null>(null);
+  const activeAnswerRef = useRef('');
+  const hasAgentStepsRef = useRef(false);
+
+  const submit = useCallback(
+    async (question: string) => {
+      const trimmed = question.trim();
+      if (!trimmed) return;
+
+      const userMessage: ChatMessage = {
+        id: crypto.randomUUID(),
+        role: 'user',
+        content: trimmed,
+      };
+      const assistantId = crypto.randomUUID();
+      const assistantMessage: ChatMessage = {
+        id: assistantId,
+        role: 'assistant',
+        content: '',
+      };
+
+      setState((prev) => ({ ...prev, streaming: true, error: '', thinkingSteps: [] }));
+      activeRecordIdRef.current = null;
+      activeAnswerRef.current = '';
+      hasAgentStepsRef.current = false;
+      onStart(userMessage, assistantMessage);
+
+      const { abort, stream } = createChatStream({
+        question: trimmed,
+        conversation_id: conversationId ?? undefined,
+      });
+
+      abortRef.current = { abort };
+
+      try {
+        for await (const event of stream) {
+          switch (event.type) {
+            case 'meta':
+              if (event.conversation_id || event.record_id) {
+                setState((s) => ({
+                  ...s,
+                  conversationId: event.conversation_id ?? s.conversationId,
+                  recordId: event.record_id ?? s.recordId,
+                }));
+                if (event.conversation_id && event.record_id) {
+                  activeRecordIdRef.current = event.record_id;
+                  onMeta?.(event.conversation_id, event.record_id);
+                }
+              }
+              break;
+            case 'agent-step': {
+              const step = {
+                step: event.step,
+                message: event.message,
+                queries: event.queries,
+                count: event.count,
+                round: event.round,
+                query_count: event.query_count,
+                total_recalled: event.total_recalled,
+                deduplicated: event.deduplicated,
+                verdict: event.verdict,
+                reasoning: event.reasoning,
+                gap: event.gap,
+                timestamp: event.timestamp,
+              } satisfies ThinkingStep;
+              hasAgentStepsRef.current = true;
+              setState((s) => ({
+                ...s,
+                thinkingSteps: [...s.thinkingSteps, step],
+              }));
+              onAgentStep?.(step);
+              break;
+            }
+            case 'answer-chunk':
+              activeAnswerRef.current += event.content;
+              onToken(assistantId, event.content);
+              break;
+            case 'answer-done':
+              break;
+            case 'token':
+              activeAnswerRef.current += event.content;
+              onToken(assistantId, event.content);
+              break;
+            case 'sources':
+              onSources(
+                typeof event.sources === 'string'
+                  ? event.sources
+                  : event.sources
+                    ? JSON.stringify(event.sources, null, 2)
+                    : event.content ?? '',
+                Array.isArray(event.source_chunks) ? event.source_chunks : [],
+              );
+              break;
+            case 'error':
+              throw new Error(event.content || '生成回答失败');
+            case 'done': {
+              if (hasAgentStepsRef.current) {
+                const step = {
+                  step: 'done',
+                  message: '回答完成',
+                  total_rounds: event.total_rounds,
+                  chunks_used: event.chunks_used,
+                  timestamp: event.timestamp,
+                } satisfies ThinkingStep;
+                setState((s) => ({
+                  ...s,
+                  thinkingSteps: [...s.thinkingSteps, step],
+                }));
+                onAgentStep?.(step);
+              }
+              break;
+            }
+          }
+        }
+      } catch (error) {
+        if (error instanceof DOMException && error.name === 'AbortError') {
+          onError?.(assistantId, '已停止生成');
+        } else {
+          const message = error instanceof Error ? error.message : '生成回答失败';
+          setState((s) => ({ ...s, error: message }));
+          onError?.(assistantId, message);
+        }
+      } finally {
+        setState((s) => ({ ...s, streaming: false }));
+        abortRef.current = null;
+        activeRecordIdRef.current = null;
+        activeAnswerRef.current = '';
+        onDone?.();
+      }
+    },
+    [conversationId, onStart, onToken, onSources, onError, onDone, onAgentStep],
+  );
+
+  const stop = useCallback(() => {
+    const recordId = activeRecordIdRef.current;
+    if (recordId) {
+      void cancelChatRecord(recordId, activeAnswerRef.current);
+    }
+    abortRef.current?.abort();
+    setState((s) => ({ ...s, streaming: false }));
+    abortRef.current = null;
+  }, []);
+
+  return {
+    ...state,
+    submit,
+    stop,
+  };
+}
