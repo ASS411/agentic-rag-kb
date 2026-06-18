@@ -13,6 +13,7 @@ from pathlib import Path
 
 from loguru import logger
 
+from app.config import settings
 from app.core.chunker import Chunk, Chunker
 from app.core.embedder import Embedder
 from app.core.parsers import parse_document
@@ -143,13 +144,32 @@ class IngestionPipeline:
         chunk_overlap = getattr(self._chunker, "chunk_overlap", "?")
         logger.info("Pipeline [{}]: chunking (size={}, overlap={})",
                      doc_id, chunk_size, chunk_overlap)
-        chunks = self._chunker.split(doc)
+
+        if settings.agent.semantic_chunking_enabled:
+            threshold = getattr(self._chunker, "semantic_threshold", "?")
+            logger.info("Pipeline [{}]: using semantic chunking with threshold={}",
+                         doc_id, threshold)
+            try:
+                chunks = await self._chunker.split_with_embedder(doc, self._embedder)
+                if chunks is None or not isinstance(chunks, list):
+                    raise ValueError("split_with_embedder returned invalid result")
+            except (AttributeError, ValueError):
+                logger.warning(
+                    "Pipeline [{}]: chunker does not support split_with_embedder, "
+                    "falling back to traditional splitting", doc_id
+                )
+                chunks = self._chunker.split(doc)
+        else:
+            chunks = self._chunker.split(doc)
 
         if not chunks:
             logger.warning("Pipeline [{}]: no chunks produced", doc_id)
             return PipelineResult(doc=doc, chunks=[])
 
-        logger.info("Pipeline [{}]: {} chunks produced", doc_id, len(chunks))
+        parent_count = sum(1 for c in chunks if c.is_parent)
+        child_count = sum(1 for c in chunks if c.is_child)
+        logger.info("Pipeline [{}]: {} chunks produced ({} parent, {} child)",
+                     doc_id, len(chunks), parent_count, child_count)
 
         # ── 3. Embed ────────────────────────────────────────────────
         logger.info("Pipeline [{}]: embedding {} chunks", doc_id, len(chunks))

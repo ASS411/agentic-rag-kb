@@ -214,6 +214,12 @@ class AgentSettings(BaseSettings):
     chunk_size: int = Field(default=800, ge=100, le=4096)
     chunk_overlap: int = Field(default=150, ge=0)
 
+    semantic_chunking_enabled: bool = Field(default=True)
+    child_chunk_size: int = Field(default=800, ge=100, le=2000)
+    child_chunk_overlap: int = Field(default=150, ge=0)
+    parent_chunk_max_chars: int = Field(default=3000, ge=1000, le=5000)
+    semantic_threshold: float = Field(default=0.5, ge=0.0, le=1.0)
+
     model_config = SettingsConfigDict(env_prefix="AGENT_", extra="ignore")
 
 

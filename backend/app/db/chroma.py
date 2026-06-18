@@ -123,17 +123,25 @@ class ChromaStore:
 
         ids: list[str] = [c.id for c in chunks]
         documents: list[str] = [c.content for c in chunks]
-        metadatas: list[Metadata] = [
-            {
+        metadatas: list[Metadata] = []
+        for c in chunks:
+            meta: Metadata = {
                 "doc_id": c.doc_id,
                 "doc_name": c.doc_name,
                 "doc_type": c.doc_type.value,
                 "page": c.page,
                 "chunk_index": c.chunk_index,
                 "char_count": c.char_count,
+                "is_parent": c.metadata.get("is_parent", False),
+                "is_child": c.metadata.get("is_child", False),
             }
-            for c in chunks
-        ]
+            parent_id = c.metadata.get("parent_chunk_id")
+            if parent_id:
+                meta["parent_chunk_id"] = parent_id
+            child_idx = c.metadata.get("child_index")
+            if child_idx is not None:
+                meta["child_index"] = child_idx
+            metadatas.append(meta)
 
         self._collection.add(
             ids=ids,
@@ -267,6 +275,34 @@ class ChromaStore:
         )
 
         return deleted
+
+    def get_by_ids(self, ids: list[str]) -> QueryResult:
+        """Retrieve chunks by their IDs.
+
+        Parameters
+        ----------
+        ids:
+            List of chunk identifiers to retrieve.
+
+        Returns
+        -------
+        chromadb.api.types.QueryResult
+            Dictionary with keys ``ids``, ``embeddings``, ``documents``,
+            ``metadatas``, and ``distances``.
+        """
+        if not ids:
+            return {
+                "ids": [],
+                "embeddings": [],
+                "documents": [],
+                "metadatas": [],
+                "distances": [],
+            }
+
+        return self._collection.get(
+            ids=ids,
+            include=["documents", "metadatas"],
+        )
 
     # ------------------------------------------------------------------
     # Introspection

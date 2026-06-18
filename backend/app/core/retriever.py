@@ -1,20 +1,30 @@
-"""Multi-query retriever with deduplication and optional re-ranking (module 2.1 / 2.2).
+"""Multi-query retriever with deduplication, re-ranking, and parent-child lookup (module 2.1 / 2.2).
 
 Provides a ``Retriever`` class that accepts a list of query strings,
 embeds each one, queries Chroma, merges + deduplicates results, and
 optionally re-ranks the candidate pool through a cross-encoder.
 
+Supports parent-child chunk retrieval:
+- Search using child chunks (~800 chars) for precise keyword matching
+- Retrieve parent chunks (~2000-3000 chars) for complete context during generation
+
 Examples::
 
     retriever = Retriever()
+
+    # Traditional retrieval
     result = await retriever.retrieve(
-        queries=["什么是RAG?", "RAG架构", "检索增强生成"],
+        queries=["什么是RAG?"],
         top_k_recall=20,
         rerank=True,
     )
-    # result.chunks     -> list[SearchChunk] (top_k_rerank best)
-    # result.total_recalled -> int (before dedup)
-    # result.reranked   -> True
+
+    # Parent-child retrieval (search child, return parent)
+    result = await retriever.retrieve_with_parent_lookup(
+        queries=["什么是RAG?"],
+        top_k_recall=20,
+        rerank=True,
+    )
 """
 
 from __future__ import annotations
@@ -48,6 +58,10 @@ class RetrievalResult(BaseModel):
     reranked: bool = Field(
         default=False,
         description="Whether the result pool was re-ranked by a cross-encoder",
+    )
+    parent_lookup: bool = Field(
+        default=False,
+        description="Whether parent chunks were retrieved for child matches",
     )
 
 
@@ -145,11 +159,15 @@ def _cosine_similarity_from_distance(distance: float) -> float:
 
 
 class Retriever:
-    """Multi-query semantic retriever with optional cross-encoder re-rank.
+    """Multi-query semantic retriever with cross-encoder re-rank and parent-child lookup.
 
     Accepts multiple query strings, embeds them in one batch, queries
     Chroma for each, merges results by deduplicating on ``chunk_id``,
     and optionally re-ranks the candidate pool through a ``Reranker``.
+
+    Supports parent-child chunk retrieval:
+    - Child chunks (~800 chars) are used for precise keyword matching during search
+    - Parent chunks (~2000-3000 chars) are retrieved for complete context during generation
 
     Parameters
     ----------
@@ -171,7 +189,7 @@ class Retriever:
     ) -> None:
         self._embedder = embedder or Embedder()
         self._chroma = chroma or ChromaStore()
-        self._reranker = reranker  # None → created on demand
+        self._reranker = reranker
 
     # ------------------------------------------------------------------
     # Public API
@@ -184,24 +202,26 @@ class Retriever:
         top_k_recall: int | None = None,
         top_k_rerank: int | None = None,
         rerank: bool = False,
+        use_child_chunks: bool = False,
     ) -> RetrievalResult:
         """Retrieve and optionally re-rank chunks for *queries*.
 
         Parameters
         ----------
         queries:
-            One or more query strings (e.g. from query-rewrite or the
-            original user question alone).
+            One or more query strings.
         top_k_recall:
             Number of chunks to fetch per query from Chroma.
             Default: ``settings.agent.top_k_recall`` (20).
         top_k_rerank:
             Number of chunks to return after re-ranking.
-            Default: ``settings.agent.top_k_rerank`` (5).  Only used
-            when *rerank* is ``True``.
+            Default: ``settings.agent.top_k_rerank`` (5).
         rerank:
             When ``True``, the deduplicated candidate pool is re-scored
             by the cross-encoder and trimmed to *top_k_rerank*.
+        use_child_chunks:
+            When ``True``, filters search to only child chunks for more
+            precise retrieval.
 
         Returns
         -------
@@ -215,30 +235,31 @@ class Retriever:
         if top_k_rerank is None:
             top_k_rerank = settings.agent.top_k_rerank
 
-        # ── 1. Embed all queries ──────────────────────────────────
         logger.debug(
-            "Retriever: embedding {} queries, top_k_recall={}, rerank={}",
+            "Retriever: embedding {} queries, top_k_recall={}, rerank={}, use_child={}",
             len(queries),
             top_k_recall,
             rerank,
+            use_child_chunks,
         )
+
         query_embeddings = await self._embedder.embed_batch(queries)
 
-        # ── 2. Query Chroma (batch) ───────────────────────────────
         total_count = self._chroma.count()
         if total_count == 0:
             logger.info("Retriever: empty Chroma collection")
             return RetrievalResult()
 
-        # Limit recall to what's actually available
         n_results = min(top_k_recall, total_count)
+
+        where_filter = {"is_child": True} if use_child_chunks else None
 
         chroma_result = self._chroma.query_batch(
             embeddings=query_embeddings,
             n_results=n_results,
+            where=where_filter,
         )
 
-        # ── 3. Build candidate pool ───────────────────────────────
         all_ids: list[list[str]] = chroma_result.get("ids", []) or []
         all_docs: list[list[str]] = chroma_result.get("documents", []) or []
         all_metas: list[list[dict]] = chroma_result.get("metadatas", []) or []
@@ -257,7 +278,6 @@ class Retriever:
 
             chunk_list = _chroma_result_to_searchchunks(query, ids, docs, metas, dists)
 
-            # Deduplicate: keep the highest score for each chunk_id
             for c in chunk_list:
                 if c.chunk_id not in candidates or c.score > candidates[c.chunk_id].score:
                     candidates[c.chunk_id] = c
@@ -270,10 +290,9 @@ class Retriever:
             len(dedup_chunks),
         )
 
-        # ── 4. Optionally re-rank ─────────────────────────────────
         if rerank and dedup_chunks:
             dedup_chunks = self._do_rerank(
-                queries[0],  # use the first (original) query for reranking
+                queries[0],
                 dedup_chunks,
                 top_k_rerank,
             )
@@ -283,7 +302,6 @@ class Retriever:
                 reranked=True,
             )
 
-        # ── 5. Sort by score descending when not reranked ─────────
         dedup_chunks.sort(key=lambda c: c.score, reverse=True)
 
         return RetrievalResult(
@@ -292,9 +310,130 @@ class Retriever:
             reranked=False,
         )
 
+    async def retrieve_with_parent_lookup(
+        self,
+        queries: list[str],
+        *,
+        top_k_recall: int | None = None,
+        top_k_rerank: int | None = None,
+        rerank: bool = False,
+    ) -> RetrievalResult:
+        """Retrieve using child chunks, then lookup parent chunks for generation.
+
+        This is the parent-child retrieval pattern:
+        1. Search using child chunks (~800 chars) for precise keyword matching
+        2. Extract parent_chunk_id from matching child chunks
+        3. Retrieve parent chunks (~2000-3000 chars) for complete context
+
+        Parameters
+        ----------
+        queries:
+            One or more query strings.
+        top_k_recall:
+            Number of child chunks to fetch per query from Chroma.
+            Default: ``settings.agent.top_k_recall`` (20).
+        top_k_rerank:
+            Number of parent chunks to return after re-ranking.
+            Default: ``settings.agent.top_k_rerank`` (5).
+        rerank:
+            When ``True``, re-rank child chunks before parent lookup.
+
+        Returns
+        -------
+        RetrievalResult
+            Result chunks are parent chunks with complete semantic context.
+        """
+        if top_k_recall is None:
+            top_k_recall = settings.agent.top_k_recall
+        if top_k_rerank is None:
+            top_k_rerank = settings.agent.top_k_rerank
+
+        logger.info(
+            "Parent-child retrieval: {} queries, top_k_recall={}, rerank={}",
+            len(queries),
+            top_k_recall,
+            rerank,
+        )
+
+        child_result = await self.retrieve(
+            queries=queries,
+            top_k_recall=top_k_recall,
+            top_k_rerank=top_k_recall,
+            rerank=rerank,
+            use_child_chunks=True,
+        )
+
+        if not child_result.chunks:
+            return RetrievalResult(
+                chunks=[],
+                total_recalled=child_result.total_recalled,
+                reranked=child_result.reranked,
+                parent_lookup=False,
+            )
+
+        parent_ids = set()
+        for chunk in child_result.chunks:
+            parent_id = chunk.metadata.get("parent_chunk_id")
+            if parent_id:
+                parent_ids.add(parent_id)
+
+        if not parent_ids:
+            logger.warning("No parent_chunk_id found in child chunks")
+            return child_result
+
+        logger.debug(
+            "Parent-child retrieval: {} unique parent chunks to fetch",
+            len(parent_ids),
+        )
+
+        parent_result = self._chroma.get_by_ids(list(parent_ids))
+
+        parent_chunks = self._convert_chroma_get_result(parent_result)
+
+        parent_chunks.sort(key=lambda c: c.score, reverse=True)
+
+        final_chunks = parent_chunks[:top_k_rerank]
+
+        logger.info(
+            "Parent-child retrieval: {} child chunks → {} parent chunks",
+            len(child_result.chunks),
+            len(final_chunks),
+        )
+
+        return RetrievalResult(
+            chunks=final_chunks,
+            total_recalled=child_result.total_recalled,
+            reranked=child_result.reranked,
+            parent_lookup=True,
+        )
+
     # ------------------------------------------------------------------
     # Internal
     # ------------------------------------------------------------------
+
+    def _convert_chroma_get_result(self, result) -> list[SearchChunk]:
+        """Convert Chroma get() result to SearchChunk list."""
+        chunks: list[SearchChunk] = []
+        ids = result.get("ids", []) or []
+        documents = result.get("documents", []) or []
+        metadatas = result.get("metadatas", []) or []
+
+        for i in range(len(ids)):
+            meta = metadatas[i] if i < len(metadatas) else {}
+            chunks.append(
+                SearchChunk(
+                    chunk_id=ids[i],
+                    content=documents[i] if i < len(documents) else "",
+                    score=meta.get("score", 0.0),
+                    doc_id=meta.get("doc_id", ""),
+                    doc_name=meta.get("doc_name", ""),
+                    doc_type=meta.get("doc_type", ""),
+                    page=meta.get("page", 1),
+                    chunk_index=meta.get("chunk_index", 0),
+                    metadata=meta,
+                )
+            )
+        return chunks
 
     def _do_rerank(
         self,
@@ -307,10 +446,8 @@ class Retriever:
             from app.core.reranker import Reranker
             self._reranker = Reranker()
 
-        # Convert SearchChunk → Chunk for the reranker
         internal_chunks = [_searchchunk_to_chunk(c) for c in chunks]
 
         reranked = self._reranker.rerank(question, internal_chunks, top_k=top_k)
 
-        # Convert back to SearchChunk
         return [_chunk_to_searchchunk(c) for c in reranked]
