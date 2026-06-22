@@ -21,6 +21,7 @@ from sqlalchemy import select, func, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
+from app.core.cache import RedisCacheManager
 from app.core.pipeline import IngestionPipeline
 from app.core.storage import get_storage
 from app.db.chroma import ChromaStore
@@ -41,6 +42,20 @@ router = APIRouter(prefix="/documents", tags=["documents"])
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
+async def _invalidate_retrieval_cache() -> None:
+    """Clear all retrieval result caches (called after doc changes)."""
+    try:
+        cache = RedisCacheManager()
+        deleted = await cache.invalidate_by_prefix("retrieve:")
+        if deleted:
+            logger.info(
+                "Invalidated {} retrieval cache entries after doc change",
+                deleted,
+            )
+    except Exception:
+        logger.warning("Failed to invalidate retrieval cache")
 
 
 def _max_size_bytes() -> int:
@@ -138,6 +153,8 @@ async def _run_ingestion(doc_id: str, file_path: str) -> None:
         doc_id,
         result.chunk_count,
     )
+
+    await _invalidate_retrieval_cache()
 
 
 async def _try_update_status(
@@ -348,4 +365,7 @@ async def delete_document(
         doc_id,
         record.file_name,
     )
+
+    await _invalidate_retrieval_cache()
+
     return APIResponse.ok(data=doc_id, message="Document deleted")

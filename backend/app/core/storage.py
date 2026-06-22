@@ -113,6 +113,10 @@ async def reconcile_chroma() -> int:
     Called at startup to clean up stale data left behind by manual
     deletions, incomplete rollbacks, or previous run remnants.
 
+    Uses ``get_all()`` (not query) to guarantee 100% coverage of the
+    entire collection — ``query_batch`` with a dummy embedding may
+    miss chunks at the tail of the index.
+
     Returns the number of chunks removed.
     """
     from app.db.chroma import ChromaStore
@@ -131,15 +135,13 @@ async def reconcile_chroma() -> int:
         logger.debug("Chroma sync: MySQL has no documents, skipping")
         return 0
 
-    # Collect doc_ids from Chroma
+    # Collect ALL doc_ids from Chroma via get_all (guaranteed full scan)
     chroma = ChromaStore()
-    dummy = [0.0] * 1024
     total = chroma.count()
     if total == 0:
         return 0
 
-    query_result = chroma.query_batch(embeddings=[dummy], n_results=total)
-    metas = query_result.get("metadatas", [[]])[0] or []
+    _, _, metas = chroma.get_all()
     chroma_ids = set(m.get("doc_id") for m in metas if m.get("doc_id"))
 
     stale = chroma_ids - mysql_ids

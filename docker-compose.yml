@@ -1,6 +1,19 @@
 version: "3.9"
 
 services:
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
   mysql:
     image: mysql:8.0
     ports:
@@ -29,8 +42,11 @@ services:
       - ./backend/.env:/app/.env:ro
     environment:
       - CUDA_VISIBLE_DEVICES=             # 使用 CPU（如需 GPU 改为 0）
+      - REDIS_URL=redis://redis:6379/0
     depends_on:
       mysql:
+        condition: service_healthy
+      redis:
         condition: service_healthy
     restart: unless-stopped
     healthcheck:
@@ -58,5 +74,6 @@ services:
   #     - ollama_data:/root/.ollama
 
 volumes:
+  redis_data:
   mysql_data:
   # ollama_data:

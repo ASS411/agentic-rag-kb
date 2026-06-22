@@ -45,6 +45,7 @@ from pydantic import BaseModel, Field
 
 from app.config import settings
 from app.core.embedder import Embedder
+from app.core.cache import RedisCacheManager, cache_key_retrieve, _hash_params
 from app.db.chroma import ChromaStore
 from app.models.search import SearchChunk
 
@@ -210,16 +211,23 @@ class Retriever:
         chroma: ChromaStore | None = None,
         reranker=None,
         bm25=None,
+        cache: RedisCacheManager | None = None,
     ) -> None:
         self._embedder = embedder or Embedder()
         self._chroma = chroma or ChromaStore()
         self._reranker = reranker
         self._bm25 = bm25
         self._bm25_filter: dict | None = None   # tracks filter used for build
+        self._cache = cache  # None = deferred lazy creation
 
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
+
+    def _get_cache(self) -> RedisCacheManager | None:
+        if self._cache is None:
+            self._cache = RedisCacheManager()
+        return self._cache if settings.redis.enabled else None
 
     async def retrieve(
         self,
@@ -265,8 +273,28 @@ class Retriever:
         if top_k_rerank is None:
             top_k_rerank = settings.agent.top_k_rerank
 
-        # Honour the global hybrid toggle; per-call ``hybrid`` is the gate
         _hybrid = hybrid and settings.agent.hybrid_search_enabled
+
+        # DEV-NOTE: cache retrieval results keyed by query+params hash.
+        # TTL kept short (1h) so document updates don't serve stale results
+        # for too long; explicit invalidation clears on doc upload/delete.
+        cache = self._get_cache()
+        if cache is not None:
+            params_hash = _hash_params(
+                queries=sorted(queries),
+                top_k_recall=top_k_recall,
+                top_k_rerank=top_k_rerank,
+                rerank=rerank,
+                use_child_chunks=use_child_chunks,
+                hybrid=_hybrid,
+            )
+            query_key = "|".join(sorted(queries))
+            rk = cache_key_retrieve(query_key, params_hash)
+            cached = await cache.get(rk)
+            if cached is not None:
+                logger.debug("Retrieve cache hit: queries={}", len(queries))
+                return RetrievalResult.model_validate(cached)
+            logger.debug("Retrieve cache miss: queries={}", len(queries))
 
         logger.debug(
             "Retriever: embedding {} queries, top_k_recall={}, rerank={}, "
@@ -274,6 +302,7 @@ class Retriever:
             len(queries), top_k_recall, rerank, use_child_chunks, _hybrid,
         )
 
+        # Honour the hybrid toggle; per-call ``hybrid`` is the gate (moved up)
         query_embeddings = await self._embedder.embed_batch(queries)
 
         total_count = self._chroma.count()
@@ -346,21 +375,33 @@ class Retriever:
                 dedup_chunks,
                 top_k_rerank,
             )
-            return RetrievalResult(
+            result = RetrievalResult(
                 chunks=dedup_chunks,
                 total_recalled=total_recalled,
                 reranked=True,
                 hybrid=_hybrid,
             )
+            if cache is not None:
+                await cache.set(
+                    rk, result.model_dump(mode="json"),
+                    ttl=settings.redis.cache_ttl_retrieve,
+                )
+            return result
 
         dedup_chunks.sort(key=lambda c: c.score, reverse=True)
 
-        return RetrievalResult(
+        result = RetrievalResult(
             chunks=dedup_chunks[:top_k_rerank] if not rerank else dedup_chunks,
             total_recalled=total_recalled,
             reranked=False,
             hybrid=_hybrid,
         )
+        if cache is not None:
+            await cache.set(
+                rk, result.model_dump(mode="json"),
+                ttl=settings.redis.cache_ttl_retrieve,
+            )
+        return result
 
     async def retrieve_with_parent_lookup(
         self,

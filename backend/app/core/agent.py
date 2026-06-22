@@ -18,6 +18,7 @@ from loguru import logger
 
 from app.config import settings
 from app.core.llm import LLMClient, LLMError
+from app.core.cache import RedisCacheManager, cache_key_rewrite
 from app.core.prompts import (
     build_quality_check_messages,
     build_replan_messages,
@@ -215,8 +216,14 @@ class AgentLoop:
         ``LLMClient`` instance.  Created with defaults if omitted.
     """
 
-    def __init__(self, *, llm: LLMClient | None = None) -> None:
+    def __init__(self, *, llm: LLMClient | None = None, cache: RedisCacheManager | None = None) -> None:
         self._llm = llm or LLMClient()
+        self._cache = cache  # None = deferred lazy creation
+
+    def _get_cache(self) -> RedisCacheManager | None:
+        if self._cache is None:
+            self._cache = RedisCacheManager()
+        return self._cache if settings.redis.enabled else None
 
     # ------------------------------------------------------------------
     # Query Rewrite (task 3.1)
@@ -240,6 +247,15 @@ class AgentLoop:
             3-5 rewritten queries.  On LLM failure, falls back to a
             single-item list containing the original question.
         """
+        cache = self._get_cache()
+        if cache is not None:
+            key = cache_key_rewrite(question)
+            cached = await cache.get(key)
+            if cached is not None:
+                logger.debug("Rewrite cache hit: question={}", question[:60])
+                return cached
+            logger.debug("Rewrite cache miss: question={}", question[:60])
+
         messages = build_rewrite_messages(question)
 
         try:
@@ -257,6 +273,12 @@ class AgentLoop:
         if not queries:
             logger.warning("Query rewrite produced empty list, using original")
             return [question]
+
+        if cache is not None:
+            await cache.set(
+                cache_key_rewrite(question), queries,
+                ttl=settings.redis.cache_ttl_rewrite,
+            )
 
         logger.debug(
             "Query rewrite: {} original -> {} queries: {}",
