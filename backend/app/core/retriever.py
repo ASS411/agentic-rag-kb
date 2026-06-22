@@ -1,4 +1,5 @@
-"""Multi-query retriever with deduplication, re-ranking, and parent-child lookup (module 2.1 / 2.2).
+"""Multi-query retriever with deduplication, re-ranking, parent-child lookup,
+and hybrid BM25+vector search with RRF fusion (module 2.1 / 2.2).
 
 Provides a ``Retriever`` class that accepts a list of query strings,
 embeds each one, queries Chroma, merges + deduplicates results, and
@@ -8,22 +9,33 @@ Supports parent-child chunk retrieval:
 - Search using child chunks (~800 chars) for precise keyword matching
 - Retrieve parent chunks (~2000-3000 chars) for complete context during generation
 
+Supports hybrid BM25 + vector search with Reciprocal Rank Fusion (RRF)
+when ``hybrid=True`` is passed to ``retrieve()``.
+
 Examples::
 
     retriever = Retriever()
 
     # Traditional retrieval
     result = await retriever.retrieve(
-        queries=["什么是RAG?"],
+        queries=["What is RAG?"],
         top_k_recall=20,
         rerank=True,
     )
 
     # Parent-child retrieval (search child, return parent)
     result = await retriever.retrieve_with_parent_lookup(
-        queries=["什么是RAG?"],
+        queries=["What is RAG?"],
         top_k_recall=20,
         rerank=True,
+    )
+
+    # Hybrid BM25 + vector retrieval
+    result = await retriever.retrieve(
+        queries=["What is RAG?"],
+        top_k_recall=20,
+        rerank=True,
+        hybrid=True,
     )
 """
 
@@ -62,6 +74,10 @@ class RetrievalResult(BaseModel):
     parent_lookup: bool = Field(
         default=False,
         description="Whether parent chunks were retrieved for child matches",
+    )
+    hybrid: bool = Field(
+        default=False,
+        description="Whether BM25 keyword search was fused with vector results",
     )
 
 
@@ -159,7 +175,8 @@ def _cosine_similarity_from_distance(distance: float) -> float:
 
 
 class Retriever:
-    """Multi-query semantic retriever with cross-encoder re-rank and parent-child lookup.
+    """Multi-query semantic retriever with cross-encoder re-rank, parent-child
+    lookup, and optional hybrid BM25+vector search.
 
     Accepts multiple query strings, embeds them in one batch, queries
     Chroma for each, merges results by deduplicating on ``chunk_id``,
@@ -168,6 +185,9 @@ class Retriever:
     Supports parent-child chunk retrieval:
     - Child chunks (~800 chars) are used for precise keyword matching during search
     - Parent chunks (~2000-3000 chars) are retrieved for complete context during generation
+
+    Supports hybrid BM25 + vector search with Reciprocal Rank Fusion (RRF)
+    when ``hybrid=True`` is passed to ``retrieve()``.
 
     Parameters
     ----------
@@ -178,6 +198,9 @@ class Retriever:
     reranker:
         ``Reranker`` instance.  Created lazily on first rerank call
         when omitted and *rerank* is requested.
+    bm25:
+        ``BM25Index`` instance.  Created lazily on first hybrid search
+        when omitted and *hybrid* is requested.
     """
 
     def __init__(
@@ -186,10 +209,13 @@ class Retriever:
         embedder: Embedder | None = None,
         chroma: ChromaStore | None = None,
         reranker=None,
+        bm25=None,
     ) -> None:
         self._embedder = embedder or Embedder()
         self._chroma = chroma or ChromaStore()
         self._reranker = reranker
+        self._bm25 = bm25
+        self._bm25_filter: dict | None = None   # tracks filter used for build
 
     # ------------------------------------------------------------------
     # Public API
@@ -203,6 +229,7 @@ class Retriever:
         top_k_rerank: int | None = None,
         rerank: bool = False,
         use_child_chunks: bool = False,
+        hybrid: bool = False,
     ) -> RetrievalResult:
         """Retrieve and optionally re-rank chunks for *queries*.
 
@@ -222,6 +249,9 @@ class Retriever:
         use_child_chunks:
             When ``True``, filters search to only child chunks for more
             precise retrieval.
+        hybrid:
+            When ``True``, also runs BM25 keyword search and fuses results
+            with vector search via Reciprocal Rank Fusion (RRF).
 
         Returns
         -------
@@ -235,12 +265,13 @@ class Retriever:
         if top_k_rerank is None:
             top_k_rerank = settings.agent.top_k_rerank
 
+        # Honour the global hybrid toggle; per-call ``hybrid`` is the gate
+        _hybrid = hybrid and settings.agent.hybrid_search_enabled
+
         logger.debug(
-            "Retriever: embedding {} queries, top_k_recall={}, rerank={}, use_child={}",
-            len(queries),
-            top_k_recall,
-            rerank,
-            use_child_chunks,
+            "Retriever: embedding {} queries, top_k_recall={}, rerank={}, "
+            "use_child={}, hybrid={}",
+            len(queries), top_k_recall, rerank, use_child_chunks, _hybrid,
         )
 
         query_embeddings = await self._embedder.embed_batch(queries)
@@ -268,6 +299,9 @@ class Retriever:
         candidates: dict[str, SearchChunk] = {}
         total_recalled = 0
 
+        # Collect per-query vector results for proper per-query RRF rankings
+        per_query_vector: list[list[SearchChunk]] = []
+
         for qi, query in enumerate(queries):
             ids = all_ids[qi] if qi < len(all_ids) else []
             docs = all_docs[qi] if qi < len(all_docs) else []
@@ -277,17 +311,33 @@ class Retriever:
             total_recalled += len(ids)
 
             chunk_list = _chroma_result_to_searchchunks(query, ids, docs, metas, dists)
+            per_query_vector.append(chunk_list)
 
             for c in chunk_list:
                 if c.chunk_id not in candidates or c.score > candidates[c.chunk_id].score:
                     candidates[c.chunk_id] = c
 
+        # --- Hybrid: BM25 keyword search + RRF fusion -----------------------
+        if _hybrid:
+            self._ensure_bm25_built(where_filter)
+            bm25_per_query = self._bm25.search_batch(  # type: ignore[union-attr]
+                queries, top_k=top_k_recall,
+            )
+            candidates = self._rrf_fuse(
+                per_query_vector=per_query_vector,
+                bm25_per_query=bm25_per_query,
+                queries=queries,
+                top_k=top_k_recall * 2,
+            )
+        # -------------------------------------------------------------------
+
         dedup_chunks = list(candidates.values())
 
         logger.debug(
-            "Retriever: total_recalled={}, deduplicated={}",
+            "Retriever: total_recalled={}, deduplicated={}{}",
             total_recalled,
             len(dedup_chunks),
+            " (hybrid RRF fused)" if _hybrid else "",
         )
 
         if rerank and dedup_chunks:
@@ -300,6 +350,7 @@ class Retriever:
                 chunks=dedup_chunks,
                 total_recalled=total_recalled,
                 reranked=True,
+                hybrid=_hybrid,
             )
 
         dedup_chunks.sort(key=lambda c: c.score, reverse=True)
@@ -308,6 +359,7 @@ class Retriever:
             chunks=dedup_chunks[:top_k_rerank] if not rerank else dedup_chunks,
             total_recalled=total_recalled,
             reranked=False,
+            hybrid=_hybrid,
         )
 
     async def retrieve_with_parent_lookup(
@@ -317,6 +369,7 @@ class Retriever:
         top_k_recall: int | None = None,
         top_k_rerank: int | None = None,
         rerank: bool = False,
+        hybrid: bool = False,
     ) -> RetrievalResult:
         """Retrieve using child chunks, then lookup parent chunks for generation.
 
@@ -337,6 +390,9 @@ class Retriever:
             Default: ``settings.agent.top_k_rerank`` (5).
         rerank:
             When ``True``, re-rank child chunks before parent lookup.
+        hybrid:
+            When ``True``, fuse BM25 keyword search with vector search
+            on child chunks before parent lookup.
 
         Returns
         -------
@@ -349,10 +405,9 @@ class Retriever:
             top_k_rerank = settings.agent.top_k_rerank
 
         logger.info(
-            "Parent-child retrieval: {} queries, top_k_recall={}, rerank={}",
-            len(queries),
-            top_k_recall,
-            rerank,
+            "Parent-child retrieval: {} queries, top_k_recall={}, rerank={}, "
+            "hybrid={}",
+            len(queries), top_k_recall, rerank, hybrid,
         )
 
         child_result = await self.retrieve(
@@ -361,6 +416,7 @@ class Retriever:
             top_k_rerank=top_k_recall,
             rerank=rerank,
             use_child_chunks=True,
+            hybrid=hybrid,
         )
 
         if not child_result.chunks:
@@ -369,6 +425,7 @@ class Retriever:
                 total_recalled=child_result.total_recalled,
                 reranked=child_result.reranked,
                 parent_lookup=False,
+                hybrid=child_result.hybrid,
             )
 
         parent_ids = set()
@@ -405,10 +462,149 @@ class Retriever:
             total_recalled=child_result.total_recalled,
             reranked=child_result.reranked,
             parent_lookup=True,
+            hybrid=child_result.hybrid,
         )
 
     # ------------------------------------------------------------------
-    # Internal
+    # Internal — BM25
+    # ------------------------------------------------------------------
+
+    def _ensure_bm25_built(self, where_filter: dict | None = None) -> None:
+        """Build the BM25 index from Chroma chunks, tracking the filter so
+        the index is rebuilt when the filter changes (e.g. a call with
+        ``use_child_chunks=True`` after one with ``use_child_chunks=False``).
+        """
+        if self._bm25 is None:
+            from app.core.bm25 import BM25Index
+            self._bm25 = BM25Index()
+
+        # Rebuild when filter changes or index has not been built yet
+        _filter_changed = self._bm25_filter != where_filter
+        if not self._bm25.is_built or _filter_changed:
+            ids, docs, metas = self._chroma.get_all(where=where_filter)
+            records = [
+                {
+                    "id": i, "content": d,
+                    "doc_id": m.get("doc_id", ""),
+                    "doc_name": m.get("doc_name", ""),
+                    "doc_type": m.get("doc_type", ""),
+                    "page": m.get("page", 1),
+                    "chunk_index": m.get("chunk_index", 0),
+                    "metadata": m,
+                }
+                for i, d, m in zip(ids, docs, metas)
+            ]
+            self._bm25.build_from_metas(records)
+            self._bm25_filter = where_filter
+
+    # ------------------------------------------------------------------
+    # Internal — RRF fusion
+    # ------------------------------------------------------------------
+
+    def _rrf_fuse(
+        self,
+        *,
+        per_query_vector: list[list[SearchChunk]],
+        bm25_per_query: list[list[dict]],
+        queries: list[str],
+        top_k: int = 40,
+    ) -> dict[str, SearchChunk]:
+        """Fuse vector and BM25 results using Reciprocal Rank Fusion.
+
+        Each query contributes its own independent vector ranking and
+        BM25 ranking; the maximum RRF score across queries is kept for
+        each chunk.
+
+        Parameters
+        ----------
+        per_query_vector:
+            Per-query vector search results (one list per query), each
+            in order of descending similarity score.
+        bm25_per_query:
+            Per-query BM25 results; each entry is a list of dicts with
+            keys ``chunk_id``, ``bm25_score``, ``rank``, and full metadata.
+        queries:
+            Original query strings (for logging context).
+        top_k:
+            Number of top fused chunks to retain.
+
+        Returns
+        -------
+        dict[str, SearchChunk]
+            Fused candidate pool keyed by chunk_id, with RRF scores.
+        """
+        k = settings.agent.hybrid_rrf_k
+
+        # RRF score accumulator: chunk_id → max RRF score
+        rrf_scores: dict[str, float] = {}
+
+        # Deduplicated chunk_map for constructing final SearchChunks
+        chunk_map: dict[str, SearchChunk] = {}
+        for v_list in per_query_vector:
+            for c in v_list:
+                if c.chunk_id not in chunk_map or c.score > chunk_map[c.chunk_id].score:
+                    chunk_map[c.chunk_id] = c
+
+        # Number of queries should match between vector and BM25
+        n_queries = max(len(per_query_vector), len(bm25_per_query))
+
+        for qi in range(n_queries):
+            # Vector RRF contributions — per-query ranking
+            v_list = per_query_vector[qi] if qi < len(per_query_vector) else []
+            # Sort by score descending to get per-query ranks
+            v_sorted = sorted(v_list, key=lambda c: c.score, reverse=True)
+            for rank_1, chunk in enumerate(v_sorted, start=1):
+                rrf = 1.0 / (k + rank_1)
+                if rrf > rrf_scores.get(chunk.chunk_id, -1.0):
+                    rrf_scores[chunk.chunk_id] = rrf
+
+            # BM25 RRF contributions — per-query ranking
+            b_list = bm25_per_query[qi] if qi < len(bm25_per_query) else []
+            for bm in b_list:
+                chunk_id = bm["chunk_id"]
+                bm25_rank = bm.get("rank", 999)
+                rrf = 1.0 / (k + bm25_rank)
+                if rrf > rrf_scores.get(chunk_id, -1.0):
+                    rrf_scores[chunk_id] = rrf
+
+                # Register BM25-only chunks not in vector results
+                if chunk_id not in chunk_map:
+                    chunk_map[chunk_id] = SearchChunk(
+                        chunk_id=chunk_id,
+                        content=bm.get("content", ""),
+                        score=bm.get("bm25_score", 0.0),
+                        doc_id=bm.get("doc_id", ""),
+                        doc_name=bm.get("doc_name", ""),
+                        doc_type=bm.get("doc_type", ""),
+                        page=bm.get("page", 1),
+                        chunk_index=bm.get("chunk_index", 0),
+                        metadata=bm.get("metadata", {}),
+                    )
+
+        # Sort by RRF score, keep top_k
+        sorted_ids = sorted(
+            rrf_scores, key=lambda cid: rrf_scores[cid], reverse=True,
+        )[:top_k]
+
+        result: dict[str, SearchChunk] = {}
+        for cid in sorted_ids:
+            chunk = chunk_map.get(cid)
+            if chunk:
+                chunk.score = round(rrf_scores[cid], 6)
+                result[cid] = chunk
+
+        logger.debug(
+            "RRF fusion: {} vector + {} BM25 across {} queries → {} fused (k={})",
+            sum(len(v) for v in per_query_vector),
+            sum(len(b) for b in bm25_per_query),
+            n_queries,
+            len(result),
+            k,
+        )
+        return result
+
+    # ------------------------------------------------------------------
+    # Internal — helpers
     # ------------------------------------------------------------------
 
     def _convert_chroma_get_result(self, result) -> list[SearchChunk]:

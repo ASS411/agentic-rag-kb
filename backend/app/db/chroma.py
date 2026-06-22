@@ -304,6 +304,31 @@ class ChromaStore:
             include=["documents", "metadatas"],
         )
 
+    def get_all(
+        self, *, where: dict | None = None,
+    ) -> tuple[list[str], list[str], list[dict]]:
+        """Retrieve all chunk ids, documents, and metadatas from the
+        collection, optionally filtered by *where*.
+
+        Parameters
+        ----------
+        where:
+            Optional Chroma where-filter dict (e.g. ``{"is_child": True}``).
+
+        Returns
+        -------
+        tuple[list[str], list[str], list[dict]]
+            (ids, documents, metadatas) — three parallel lists.
+        """
+        result = self._collection.get(
+            where=where,
+            include=["documents", "metadatas"],
+        )
+        ids: list[str] = result.get("ids", []) or []
+        docs: list[str] = result.get("documents", []) or []
+        metas: list[dict] = result.get("metadatas", []) or []
+        return ids, docs, metas
+
     # ------------------------------------------------------------------
     # Introspection
     # ------------------------------------------------------------------

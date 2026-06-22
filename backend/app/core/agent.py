@@ -491,6 +491,7 @@ class AgentLoop:
                 top_k_recall=top_k_recall,
                 top_k_rerank=top_k_rerank,
                 rerank=True,
+                hybrid=True,
             )
             yield _evt(
                 "search",

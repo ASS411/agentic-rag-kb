@@ -220,6 +220,13 @@ class AgentSettings(BaseSettings):
     parent_chunk_max_chars: int = Field(default=3000, ge=1000, le=5000)
     semantic_threshold: float = Field(default=0.5, ge=0.0, le=1.0)
 
+    # Hybrid search (BM25 + vector)
+    hybrid_search_enabled: bool = Field(default=True)
+    hybrid_rrf_k: int = Field(
+        default=60, ge=1, le=200,
+        description="K constant for Reciprocal Rank Fusion",
+    )
+
     model_config = SettingsConfigDict(env_prefix="AGENT_", extra="ignore")
 
 
@@ -236,6 +243,36 @@ class EvaluationSettings(BaseSettings):
     report_retention_days: int = Field(default=90)
 
     model_config = SettingsConfigDict(env_prefix="EVAL_", extra="ignore")
+
+
+class RedisSettings(BaseSettings):
+    """Redis cache configuration."""
+
+    url: str = Field(
+        default="redis://localhost:6379/0",
+        description="Redis connection URL",
+    )
+    enabled: bool = Field(
+        default=True,
+        description="Whether Redis caching is enabled",
+    )
+    cache_ttl_embedding: int = Field(
+        default=86400,
+        ge=1,
+        description="TTL in seconds for cached embeddings (default 24h)",
+    )
+    cache_ttl_rewrite: int = Field(
+        default=86400,
+        ge=1,
+        description="TTL in seconds for cached query rewrites (default 24h)",
+    )
+    cache_ttl_retrieve: int = Field(
+        default=3600,
+        ge=1,
+        description="TTL in seconds for cached retrieval results (default 1h)",
+    )
+
+    model_config = SettingsConfigDict(env_prefix="REDIS_", extra="ignore")
 
 
 class ServerSettings(BaseSettings):
@@ -293,6 +330,7 @@ class Settings(BaseSettings):
     reranker: RerankerSettings = RerankerSettings()
     chroma: ChromaSettings = ChromaSettings()
     mysql: MySQLSettings = MySQLSettings()
+    redis: RedisSettings = RedisSettings()
     upload: UploadSettings = UploadSettings()
     agent: AgentSettings = AgentSettings()
     evaluation: EvaluationSettings = EvaluationSettings()
