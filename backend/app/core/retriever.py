@@ -170,6 +170,38 @@ def _cosine_similarity_from_distance(distance: float) -> float:
     return 1.0 - (distance / 2.0)
 
 
+def _build_where_filter(
+    use_child_chunks: bool,
+    doc_filter: list[str] | None,
+) -> dict | None:
+    """Combine child/parent filter with optional doc_name filter.
+
+    Chroma's ``where`` clause supports ``$and`` / ``$or``.  We build a
+    top-level ``$and`` of the child filter (when requested) and the
+    doc_name filter (when filenames were extracted from the question).
+    """
+    conditions: list[dict] = []
+
+    if use_child_chunks:
+        conditions.append({"is_child": True})
+
+    if doc_filter:
+        # Case-insensitive exact match is not supported by Chroma metadata
+        # queries; store doc_name in lowercase if we want that. For now we
+        # match the stored value (preserving original casing from upload).
+        names = list(dict.fromkeys(doc_filter))  # preserve order, dedupe
+        if len(names) == 1:
+            conditions.append({"doc_name": names[0]})
+        else:
+            conditions.append({"$or": [{"doc_name": n} for n in names]})
+
+    if not conditions:
+        return None
+    if len(conditions) == 1:
+        return conditions[0]
+    return {"$and": conditions}
+
+
 # ---------------------------------------------------------------------------
 # Retriever
 # ---------------------------------------------------------------------------
@@ -238,6 +270,7 @@ class Retriever:
         rerank: bool = False,
         use_child_chunks: bool = False,
         hybrid: bool = False,
+        doc_filter: list[str] | None = None,
     ) -> RetrievalResult:
         """Retrieve and optionally re-rank chunks for *queries*.
 
@@ -260,6 +293,9 @@ class Retriever:
         hybrid:
             When ``True``, also runs BM25 keyword search and fuses results
             with vector search via Reciprocal Rank Fusion (RRF).
+        doc_filter:
+            Optional list of document names to restrict retrieval to.
+            Extracted from the user's question (e.g. ``["agent项目要求.txt"]``).
 
         Returns
         -------
@@ -279,6 +315,8 @@ class Retriever:
         # TTL kept short (1h) so document updates don't serve stale results
         # for too long; explicit invalidation clears on doc upload/delete.
         cache = self._get_cache()
+        where_filter = _build_where_filter(use_child_chunks, doc_filter)
+
         if cache is not None:
             params_hash = _hash_params(
                 queries=sorted(queries),
@@ -287,19 +325,27 @@ class Retriever:
                 rerank=rerank,
                 use_child_chunks=use_child_chunks,
                 hybrid=_hybrid,
+                doc_filter=doc_filter,
             )
             query_key = "|".join(sorted(queries))
             rk = cache_key_retrieve(query_key, params_hash)
             cached = await cache.get(rk)
             if cached is not None:
-                logger.debug("Retrieve cache hit: queries={}", len(queries))
+                logger.debug(
+                    "Retrieve cache hit: queries={}, doc_filter={}",
+                    len(queries), doc_filter,
+                )
                 return RetrievalResult.model_validate(cached)
-            logger.debug("Retrieve cache miss: queries={}", len(queries))
+            logger.debug(
+                "Retrieve cache miss: queries={}, doc_filter={}",
+                len(queries), doc_filter,
+            )
 
         logger.debug(
             "Retriever: embedding {} queries, top_k_recall={}, rerank={}, "
-            "use_child={}, hybrid={}",
+            "use_child={}, hybrid={}, doc_filter={}",
             len(queries), top_k_recall, rerank, use_child_chunks, _hybrid,
+            doc_filter,
         )
 
         # Honour the hybrid toggle; per-call ``hybrid`` is the gate (moved up)
@@ -311,8 +357,6 @@ class Retriever:
             return RetrievalResult()
 
         n_results = min(top_k_recall, total_count)
-
-        where_filter = {"is_child": True} if use_child_chunks else None
 
         chroma_result = self._chroma.query_batch(
             embeddings=query_embeddings,
@@ -411,6 +455,7 @@ class Retriever:
         top_k_rerank: int | None = None,
         rerank: bool = False,
         hybrid: bool = False,
+        doc_filter: list[str] | None = None,
     ) -> RetrievalResult:
         """Retrieve using child chunks, then lookup parent chunks for generation.
 
@@ -434,6 +479,8 @@ class Retriever:
         hybrid:
             When ``True``, fuse BM25 keyword search with vector search
             on child chunks before parent lookup.
+        doc_filter:
+            Optional list of document names to restrict retrieval to.
 
         Returns
         -------
@@ -447,8 +494,8 @@ class Retriever:
 
         logger.info(
             "Parent-child retrieval: {} queries, top_k_recall={}, rerank={}, "
-            "hybrid={}",
-            len(queries), top_k_recall, rerank, hybrid,
+            "hybrid={}, doc_filter={}",
+            len(queries), top_k_recall, rerank, hybrid, doc_filter,
         )
 
         child_result = await self.retrieve(
@@ -458,6 +505,7 @@ class Retriever:
             rerank=rerank,
             use_child_chunks=True,
             hybrid=hybrid,
+            doc_filter=doc_filter,
         )
 
         if not child_result.chunks:

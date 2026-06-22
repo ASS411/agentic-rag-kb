@@ -7,6 +7,7 @@ Covers:
 - Message structure validation
 - Custom system prompt and answer template
 - Edge cases: empty chunks, many chunks, long content
+- Document-name extraction (regression: CJK-verb + filename gluing)
 """
 
 from __future__ import annotations
@@ -15,6 +16,7 @@ import pytest
 
 from app.core.prompts import (
     RAGPromptBuilder,
+    extract_target_doc_names,
     format_context,
     format_sources,
 )
@@ -321,3 +323,67 @@ class TestBuildWithSources:
         messages, sources = builder.build_with_sources([], "q")
         assert len(messages) == 2
         assert "无" in sources
+
+
+# ---------------------------------------------------------------------------
+# extract_target_doc_names
+# ---------------------------------------------------------------------------
+
+
+class TestExtractTargetDocNames:
+    """Regression tests for the document-name extractor.
+
+    A previous bug caused inputs like "根据agent项目要求.txt" to be
+    extracted as "根据agent项目要求.txt" (the leading CJK verb was
+    swallowed into the filename), which silently filtered Chroma to
+    zero results.  These tests pin the expected behaviour.
+    """
+
+    @pytest.mark.parametrize(
+        "question,expected",
+        [
+            # The original bug case — verb glued to filename (no space, no brackets)
+            ("根据agent项目要求.txt，列出三个要点", ["agent项目要求.txt"]),
+            ("在agent项目要求.txt中查找", ["agent项目要求.txt"]),
+            ("从agent项目要求.txt里", ["agent项目要求.txt"]),
+            ("查询 foo.txt", ["foo.txt"]),
+
+            # Verb with space
+            ("根据 agent项目要求.txt，列出三个要点", ["agent项目要求.txt"]),
+
+            # Bracket / book-mark styles
+            ("agent项目要求.txt 列出三个要点", ["agent项目要求.txt"]),
+            ("【agent项目要求.txt】列出三个要点", ["agent项目要求.txt"]),
+            ("[agent项目要求.txt] 列出三个要点", ["agent项目要求.txt"]),
+            ("《agent项目要求.txt》", ["agent项目要求.txt"]),
+            ("根据「agent项目要求.txt」", ["agent项目要求.txt"]),
+            ("根据[agent项目要求.txt]的内容", ["agent项目要求.txt"]),
+
+            # Pure CJK filenames
+            ("请阅读 项目计划.txt", ["项目计划.txt"]),
+            ("参考 调研报告.md 的内容", ["调研报告.md"]),
+            ("在 中文文件名.txt 里查找", ["中文文件名.txt"]),
+
+            # Multiple filenames in one question
+            ("对比 foo.txt 和 bar.md 的差异", ["foo.txt", "bar.md"]),
+
+            # Negative cases
+            ("", None),
+            ("hello world", None),
+            ("abc.xyz", None),  # unknown extension
+        ],
+    )
+    def test_extract(self, question, expected):
+        assert extract_target_doc_names(question) == expected
+
+    def test_does_not_swallow_verb_into_filename(self):
+        """Pinned regression: "根据xxx.txt" must not become "根据xxx.txt"."""
+        names = extract_target_doc_names("根据agent项目要求.txt")
+        assert names == ["agent项目要求.txt"]
+        # Explicit guard: the captured name must not start with a CJK verb.
+        assert names is not None
+        for n in names:
+            assert not n.startswith("根据")
+            assert not n.startswith("在")
+            assert not n.startswith("从")
+            assert not n.startswith("查询")

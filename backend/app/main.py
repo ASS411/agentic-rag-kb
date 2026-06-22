@@ -75,6 +75,20 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     except Exception as exc:
         logger.warning("   Chroma sync skipped: {}", exc)
 
+    # ── Reconcile doc-name semantic catalog with MySQL ──────────────
+    try:
+        from app.core.storage import reconcile_doc_catalog
+        added, removed = await reconcile_doc_catalog()
+        if added or removed:
+            logger.info(
+                "   DocCatalog sync: +{} added, -{} stale removed",
+                added, removed,
+            )
+        else:
+            logger.info("   DocCatalog sync: catalog already in sync")
+    except Exception as exc:
+        logger.warning("   DocCatalog sync skipped: {}", exc)
+
     yield  # Application runs here
 
     # ── Shutdown ─────────────────────────────────────────────────────

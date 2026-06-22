@@ -44,7 +44,7 @@ def _mock_retriever(monkeypatch, total_recalled=6, dedup_count=4):
     class FakeRetriever:
         async def retrieve_with_parent_lookup(
             self, queries, *, top_k_recall=20, top_k_rerank=5, rerank=True,
-            hybrid=False,
+            hybrid=False, doc_filter=None,
         ):
             from app.core.retriever import RetrievalResult
             return RetrievalResult(
@@ -197,7 +197,7 @@ class TestAgentLoopRun:
             class CustomFakeRetriever:
                 async def retrieve_with_parent_lookup(
                     self, queries, *, top_k_recall=20, top_k_rerank=5,
-                    rerank=True, hybrid=False,
+                    rerank=True, hybrid=False, doc_filter=None,
                 ):
                     from app.core.retriever import RetrievalResult
                     chunks = [

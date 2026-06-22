@@ -36,6 +36,10 @@ class ChromaStore:
     core operations needed by the ingestion pipeline and the retrieval layer:
     ``add``, ``query``, and ``delete``.
 
+    The store can also expose additional collections (e.g. ``doc_catalog``)
+    on the same on-disk persistence directory through ``client`` and
+    ``get_collection``.
+
     Usage::
 
         store = ChromaStore()
@@ -86,6 +90,28 @@ class ChromaStore:
             "Chroma collection ready: name={}, count={}",
             self._collection_name,
             self._collection.count(),
+        )
+
+    # ------------------------------------------------------------------
+    # Multi-collection helpers
+    # ------------------------------------------------------------------
+
+    @property
+    def client(self) -> chromadb.PersistentClient:
+        """Return the underlying PersistentClient so callers can open
+        additional collections on the same on-disk store.
+        """
+        return self._client
+
+    def get_collection(self, name: str):
+        """Open or create an additional collection on the same client.
+
+        Used by ``DocCatalog`` to maintain a side index of document
+        filenames alongside the main knowledge-base collection.
+        """
+        return self._client.get_or_create_collection(
+            name=name,
+            metadata={"hnsw:space": "cosine"},
         )
 
     # ------------------------------------------------------------------

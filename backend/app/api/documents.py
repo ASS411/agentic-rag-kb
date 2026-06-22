@@ -148,6 +148,17 @@ async def _run_ingestion(doc_id: str, file_path: str) -> None:
 
     await _persist_chunk_metadata(doc_id, result.chunks)
 
+    # Register the document's file_name in the semantic catalog so that
+    # users can refer to it colloquially ("那个 agent 项目要求") and
+    # still get a doc_filter.
+    try:
+        from app.core.doc_catalog import DocCatalog
+        await DocCatalog().add(doc_id, result.doc.file_name)
+    except Exception:
+        logger.exception(
+            "DocCatalog add failed (non-fatal): doc_id={}", doc_id,
+        )
+
     logger.info(
         "Background ingestion complete: doc_id={}, chunks={}, status=ready",
         doc_id,
@@ -351,6 +362,15 @@ async def delete_document(
         doc_id,
         deleted_chunks,
     )
+
+    # ── 1b. Remove the document from the semantic catalog ────────────
+    try:
+        from app.core.doc_catalog import DocCatalog
+        DocCatalog().remove(doc_id)
+    except Exception:
+        logger.exception(
+            "DocCatalog remove failed (non-fatal): doc_id={}", doc_id,
+        )
 
     # ── 2. Delete from MySQL ─────────────────────────────────────────
     await db.delete(record)

@@ -152,6 +152,12 @@ class ChromaSettings(BaseSettings):
     collection: str = Field(
         default="knowledge_base",
     )
+    catalog_collection: str = Field(
+        default="doc_catalog",
+        description="Side collection used by DocCatalog to embed each "
+                    "uploaded document's file_name.  Lives on the same "
+                    "persist_dir as the main knowledge_base collection.",
+    )
 
     model_config = SettingsConfigDict(env_prefix="CHROMA_", extra="ignore")
 
@@ -225,6 +231,33 @@ class AgentSettings(BaseSettings):
     hybrid_rrf_k: int = Field(
         default=60, ge=1, le=200,
         description="K constant for Reciprocal Rank Fusion",
+    )
+
+    # Doc-name semantic catalog
+    doc_catalog_enabled: bool = Field(
+        default=True,
+        description="Whether to use the doc-name semantic catalog for "
+                    "doc_filter resolution.  When False, falls back to "
+                    "the regex-based extractor in extract_target_doc_names.",
+    )
+    doc_catalog_threshold: float = Field(
+        default=0.75, ge=0.0, le=1.0,
+        description="Cosine-similarity floor (0..1) for the doc-name "
+                    "catalog.  Documents below this similarity are NOT "
+                    "used as a doc_filter.",
+    )
+    doc_catalog_min_gap: float = Field(
+        default=0.03, ge=0.0, le=1.0,
+        description="Minimum gap between top-1 and top-2 catalog hits.  "
+                    "If the gap is smaller, the question is treated as "
+                    "non-specific and no doc_filter is applied (this "
+                    "prevents generic questions like '什么是知识图谱' "
+                    "from being routed to the highest-baseline doc).",
+    )
+    doc_catalog_top_k: int = Field(
+        default=3, ge=1, le=20,
+        description="Number of catalog candidates to consider when "
+                    "resolving a doc_filter from a question.",
     )
 
     model_config = SettingsConfigDict(env_prefix="AGENT_", extra="ignore")

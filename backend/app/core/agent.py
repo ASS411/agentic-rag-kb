@@ -425,13 +425,25 @@ class AgentLoop:
     # Main agent loop (task 5.2)
     # ------------------------------------------------------------------
 
-    async def run(self, question: str, *, max_rounds: int | None = None):
+    async def run(
+        self,
+        question: str,
+        *,
+        max_rounds: int | None = None,
+        doc_filter: list[str] | None = None,
+    ):
         """Run the full agent pipeline: rewrite -> search (parent-child) -> check
         -> (replan -> search -> ...) -> generate. Yields SSE event strings.
 
         Uses parent-child retrieval: searches child chunks for precision,
         then returns parent chunks for complete semantic context. Reranking
         is performed internally by ``retrieve_with_parent_lookup``.
+
+        Parameters
+        ----------
+        doc_filter:
+            Optional list of document names (e.g. extracted from the question)
+            to restrict retrieval to.
         """
         from app.core.retriever import Retriever
 
@@ -514,6 +526,7 @@ class AgentLoop:
                 top_k_rerank=top_k_rerank,
                 rerank=True,
                 hybrid=True,
+                doc_filter=doc_filter,
             )
             yield _evt(
                 "search",

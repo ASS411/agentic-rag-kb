@@ -156,3 +156,64 @@ async def reconcile_chroma() -> int:
         )
 
     return removed_total
+
+
+async def reconcile_doc_catalog() -> tuple[int, int]:
+    """Reconcile the doc-name semantic catalog with MySQL.
+
+    For every document in MySQL that is missing from the catalog, the
+    file_name is embedded and added (one embedding API call per doc).
+    Catalog entries whose doc_id no longer exists in MySQL are removed.
+
+    Called at startup so that documents uploaded before the catalog
+    feature was added still benefit from semantic doc_filter resolution.
+
+    Returns ``(added, removed)``.
+    """
+    from app.core.doc_catalog import DocCatalog
+    from app.db.mysql import async_session_factory
+    from app.models.document import DocumentModel
+    from loguru import logger
+    from sqlalchemy import select
+
+    catalog = DocCatalog()
+    existing = {entry["doc_id"]: entry["file_name"] for entry in catalog.list_all()}
+
+    # Pull (doc_id, file_name) for every document in MySQL.
+    async with async_session_factory() as session:
+        result = await session.execute(
+            select(DocumentModel.doc_id, DocumentModel.file_name)
+        )
+        mysql_rows = result.fetchall()
+
+    added = 0
+    removed = 0
+    for doc_id, file_name in mysql_rows:
+        if doc_id in existing:
+            continue
+        if not file_name:
+            continue
+        try:
+            await catalog.add(doc_id, file_name)
+            added += 1
+            logger.info(
+                "DocCatalog sync: added doc_id={}... file_name={!r}",
+                doc_id[:16], file_name,
+            )
+        except Exception as exc:
+            logger.warning(
+                "DocCatalog sync: failed to add doc_id={}... ({})",
+                doc_id[:16], exc,
+            )
+
+    # Remove catalog entries whose doc_id is no longer in MySQL.
+    mysql_ids = {row[0] for row in mysql_rows}
+    for doc_id in list(existing.keys()):
+        if doc_id not in mysql_ids:
+            catalog.remove(doc_id)
+            removed += 1
+            logger.info("DocCatalog sync: removed stale doc_id={}...", doc_id[:16])
+
+    if not added and not removed:
+        logger.debug("DocCatalog sync: catalog already in sync")
+    return added, removed
