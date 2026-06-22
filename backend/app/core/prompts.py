@@ -413,6 +413,107 @@ def build_replan_messages(question: str, gap_description: str) -> list[dict[str,
 
 
 # ---------------------------------------------------------------------------
+# Document-name filter extraction
+# ---------------------------------------------------------------------------
+
+import re
+
+_FILENAME_PATTERN = re.compile(
+    r"""
+    # Bracket / book-mark styles (e.g. 【x.txt】 / 《x.txt》 / [x.txt] / "x.txt")
+    [\[【《「『\"“'](?P<n1>[^\]】》」』\"”'\s\u3000-\u303f\uff00-\uffef]+?\.(?:txt|md|pdf|docx?|xlsx?|pptx?|csv|json|yml|yaml))
+    [\]】》」』\"”']
+    |
+    # Verb-prefixed filename: optionally absorb a CJK verb (根据/在/从/...)
+    # that is glued directly to the filename with no whitespace separator,
+    # so that "根据xxx.txt" is captured as "xxx.txt" rather than
+    # "根据xxx.txt" (the old behaviour, which silently filtered Chroma
+    # to zero results because no document had such a name).  The leading
+    # character class allows ASCII alnum / underscore / hyphen / CJK
+    # ideographs (so "agent项目要求.txt" still matches); the body
+    # character class additionally rejects CJK punctuation, ASCII
+    # brackets and parens so the match cannot bleed into surrounding
+    # bracket book-marks.
+    (?:根据|在|从|查看|参考|阅读|查询)?
+    (?P<n2>[A-Za-z0-9_\-一-鿿][^\s\u3000-\u303f\uff00-\uffef\[\]【】《》「」『』\"”'\(\)]*?\.(?:txt|md|pdf|docx?|xlsx?|pptx?|csv|json|yml|yaml))
+    """,
+    re.VERBOSE | re.IGNORECASE,
+)
+
+
+def extract_target_doc_names(question: str) -> list[str] | None:
+    """Extract referenced document names from a user question.
+
+    Supports patterns like::
+
+        [agent项目要求.txt]
+        《agent项目要求.txt》
+        根据 agent项目要求.txt 的内容
+        agent项目要求.txt
+
+    Returns ``None`` when no filename is detected (no filter should be
+    applied in that case).
+    """
+    if not question:
+        return None
+
+    seen = set()
+    names: list[str] = []
+    for m in _FILENAME_PATTERN.finditer(question):
+        g = m.group("n1") or m.group("n2")
+        if not g:
+            continue
+        name = g.strip().strip(".\"'").strip("[]【】《》「』\"“”'")
+        # Accept only reasonable filename shapes
+        if " " in name or len(name) < 3:
+            continue
+        if name.lower() not in {n.lower() for n in seen}:
+            seen.add(name)
+            names.append(name)
+
+    return names if names else None
+
+
+async def resolve_doc_filter(
+    question: str,
+    catalog: "DocCatalog | None" = None,
+) -> list[str] | None:
+    """Resolve which document(s) the user is referring to in *question*.
+
+    Strategy (in order):
+
+    1. **Semantic catalog match** (preferred).  When a ``DocCatalog`` is
+       available and ``settings.agent.doc_catalog_enabled`` is True, the
+       question is embedded and compared against every uploaded
+       file_name.  Filenames with cosine similarity above the
+       configured threshold become the doc_filter.  This handles
+       colloquial references such as "那个 checklist", partial names
+       like "agent项目要求" (no extension), and typos.
+
+    2. **Regex fallback**.  When the catalog is empty / disabled /
+       unavailable, fall back to :func:`extract_target_doc_names` which
+       matches bracketed / verb-prefixed filenames literally.
+
+    Returns ``None`` when no document reference is detected.
+    """
+    from app.config import settings as _settings
+    from app.core.doc_catalog import DocCatalog
+
+    if not question or not question.strip():
+        return None
+
+    if _settings.agent.doc_catalog_enabled:
+        cat = catalog or DocCatalog()
+        names = await cat.find_relevant(question)
+        if names:
+            return names
+
+    # Fallback: regex-based extraction (preserves old behaviour when the
+    # catalog is empty or the feature is disabled).
+    return extract_target_doc_names(question)
+
+
+# ---------------------------------------------------------------------------
 # Quality Check prompt (Phase 2 — module 4.3)
 # ---------------------------------------------------------------------------
 

@@ -29,7 +29,7 @@ from pydantic import BaseModel
 from app.config import settings
 from app.core.embedder import Embedder, EmbedderError
 from app.core.llm import LLMClient, LLMError, LLMStreamError
-from app.core.prompts import RAGPromptBuilder, format_sources
+from app.core.prompts import RAGPromptBuilder, format_sources, resolve_doc_filter
 from app.db.chroma import ChromaStore
 from app.models.chat import (
     ChatRequest,
@@ -117,12 +117,16 @@ async def _check_concurrent(conversation_id: str | None) -> None:
 # ---------------------------------------------------------------------------
 
 async def _retrieve_chunks(
-    question: str, top_k: int
+    question: str,
+    top_k: int,
+    doc_filter: list[str] | None = None,
 ) -> list[SearchChunk]:
     """Embed the question and retrieve top-k chunks from Chroma.
 
     Returns an empty list when the collection is empty or an error occurs.
     """
+    from app.core.retriever import _build_where_filter
+
     embedder = Embedder()
     try:
         query_embedding = await embedder.embed(question)
@@ -139,9 +143,12 @@ async def _retrieve_chunks(
         logger.info("Chat: empty collection — no context available")
         return []
 
+    where_filter = _build_where_filter(False, doc_filter)
+
     chroma_result = chroma.query(
         embedding=query_embedding,
         n_results=top_k,
+        where=where_filter,
     )
 
     search_response = _assemble_response(question, chroma_result)
@@ -259,6 +266,10 @@ async def _stream_agent_chat(body: ChatRequest):
     )
     yield _sse_event("meta", "", conversation_id=conv_id, record_id=record_id)
 
+    doc_filter = await resolve_doc_filter(body.question)
+    if doc_filter:
+        logger.info("Agent chat: restricting retrieval to doc_filter={}", doc_filter)
+
     agent = AgentLoop()
     answer_parts: list[str] = []
     source_chunks: list[SearchChunk] = []
@@ -270,6 +281,7 @@ async def _stream_agent_chat(body: ChatRequest):
         async for event_json in agent.run(
             body.question,
             max_rounds=body.max_rounds,
+            doc_filter=doc_filter,
         ):
             yield f"data: {event_json}\n\n"
             event = json.loads(event_json)
@@ -336,6 +348,10 @@ async def _non_stream_agent_chat(body: ChatRequest) -> JSONResponse:
         question=body.question,
     )
 
+    doc_filter = await resolve_doc_filter(body.question)
+    if doc_filter:
+        logger.info("Agent non-stream: restricting retrieval to doc_filter={}", doc_filter)
+
     agent = AgentLoop()
     answer_parts: list[str] = []
     sources_text = ""
@@ -345,6 +361,7 @@ async def _non_stream_agent_chat(body: ChatRequest) -> JSONResponse:
         async for event_json in agent.run(
             body.question,
             max_rounds=body.max_rounds,
+            doc_filter=doc_filter,
         ):
             event = json.loads(event_json)
             event_type = event.get("type")
@@ -430,8 +447,11 @@ async def _stream_chat(body: ChatRequest) -> AsyncGenerator[str, None]:
     yield _sse_event("meta", "", conversation_id=conv_id, record_id=record_id)
 
     # ── 2. Retrieve chunks ──────────────────────────────────────────
+    doc_filter = await resolve_doc_filter(body.question)
+    if doc_filter:
+        logger.info("Chat: restricting retrieval to doc_filter={}", doc_filter)
     try:
-        chunks = await _retrieve_chunks(body.question, body.top_k)
+        chunks = await _retrieve_chunks(body.question, body.top_k, doc_filter)
     except HTTPException as exc:
         await fail_qa_record(record_id=record_id)
         yield _sse_error(exc.detail)
@@ -541,8 +561,11 @@ async def _non_stream_chat(body: ChatRequest) -> JSONResponse:
     )
 
     # ── 2. Retrieve chunks ──────────────────────────────────────────
+    doc_filter = await resolve_doc_filter(body.question)
+    if doc_filter:
+        logger.info("Chat non-stream: restricting retrieval to doc_filter={}", doc_filter)
     try:
-        chunks = await _retrieve_chunks(body.question, body.top_k)
+        chunks = await _retrieve_chunks(body.question, body.top_k, doc_filter)
     except HTTPException as exc:
         await fail_qa_record(record_id=record_id)
         return JSONResponse(

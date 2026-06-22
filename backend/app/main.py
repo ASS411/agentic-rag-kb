@@ -17,6 +17,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.api.chat import router as chat_router
 from app.api.documents import router as documents_router
+from app.api.evaluate import router as evaluate_router
 from app.api.health import router as health_router
 from app.api.history import router as history_router
 from app.api.search import router as search_router
@@ -74,6 +75,20 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     except Exception as exc:
         logger.warning("   Chroma sync skipped: {}", exc)
 
+    # ── Reconcile doc-name semantic catalog with MySQL ──────────────
+    try:
+        from app.core.storage import reconcile_doc_catalog
+        added, removed = await reconcile_doc_catalog()
+        if added or removed:
+            logger.info(
+                "   DocCatalog sync: +{} added, -{} stale removed",
+                added, removed,
+            )
+        else:
+            logger.info("   DocCatalog sync: catalog already in sync")
+    except Exception as exc:
+        logger.warning("   DocCatalog sync skipped: {}", exc)
+
     yield  # Application runs here
 
     # ── Shutdown ─────────────────────────────────────────────────────
@@ -112,3 +127,4 @@ app.include_router(health_router, prefix="/api/v1")
 app.include_router(history_router, prefix="/api/v1")
 app.include_router(documents_router, prefix="/api/v1")
 app.include_router(search_router, prefix="/api/v1")
+app.include_router(evaluate_router, prefix="/api/v1")

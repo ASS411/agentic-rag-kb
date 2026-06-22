@@ -152,6 +152,12 @@ class ChromaSettings(BaseSettings):
     collection: str = Field(
         default="knowledge_base",
     )
+    catalog_collection: str = Field(
+        default="doc_catalog",
+        description="Side collection used by DocCatalog to embed each "
+                    "uploaded document's file_name.  Lives on the same "
+                    "persist_dir as the main knowledge_base collection.",
+    )
 
     model_config = SettingsConfigDict(env_prefix="CHROMA_", extra="ignore")
 
@@ -214,7 +220,92 @@ class AgentSettings(BaseSettings):
     chunk_size: int = Field(default=800, ge=100, le=4096)
     chunk_overlap: int = Field(default=150, ge=0)
 
+    semantic_chunking_enabled: bool = Field(default=True)
+    child_chunk_size: int = Field(default=800, ge=100, le=2000)
+    child_chunk_overlap: int = Field(default=150, ge=0)
+    parent_chunk_max_chars: int = Field(default=3000, ge=1000, le=5000)
+    semantic_threshold: float = Field(default=0.5, ge=0.0, le=1.0)
+
+    # Hybrid search (BM25 + vector)
+    hybrid_search_enabled: bool = Field(default=True)
+    hybrid_rrf_k: int = Field(
+        default=60, ge=1, le=200,
+        description="K constant for Reciprocal Rank Fusion",
+    )
+
+    # Doc-name semantic catalog
+    doc_catalog_enabled: bool = Field(
+        default=True,
+        description="Whether to use the doc-name semantic catalog for "
+                    "doc_filter resolution.  When False, falls back to "
+                    "the regex-based extractor in extract_target_doc_names.",
+    )
+    doc_catalog_threshold: float = Field(
+        default=0.75, ge=0.0, le=1.0,
+        description="Cosine-similarity floor (0..1) for the doc-name "
+                    "catalog.  Documents below this similarity are NOT "
+                    "used as a doc_filter.",
+    )
+    doc_catalog_min_gap: float = Field(
+        default=0.03, ge=0.0, le=1.0,
+        description="Minimum gap between top-1 and top-2 catalog hits.  "
+                    "If the gap is smaller, the question is treated as "
+                    "non-specific and no doc_filter is applied (this "
+                    "prevents generic questions like '什么是知识图谱' "
+                    "from being routed to the highest-baseline doc).",
+    )
+    doc_catalog_top_k: int = Field(
+        default=3, ge=1, le=20,
+        description="Number of catalog candidates to consider when "
+                    "resolving a doc_filter from a question.",
+    )
+
     model_config = SettingsConfigDict(env_prefix="AGENT_", extra="ignore")
+
+
+class EvaluationSettings(BaseSettings):
+    """RAGAS evaluation configuration."""
+
+    enabled: bool = Field(default=True)
+    default_metrics: list[str] = Field(
+        default=["faithfulness", "answer_relevancy", "context_precision", "context_recall"],
+    )
+    max_samples_per_eval: int = Field(default=100, ge=1, le=500)
+    use_parent_chunks_for_eval: bool = Field(default=True)
+    store_reports: bool = Field(default=True)
+    report_retention_days: int = Field(default=90)
+
+    model_config = SettingsConfigDict(env_prefix="EVAL_", extra="ignore")
+
+
+class RedisSettings(BaseSettings):
+    """Redis cache configuration."""
+
+    url: str = Field(
+        default="redis://localhost:6379/0",
+        description="Redis connection URL",
+    )
+    enabled: bool = Field(
+        default=True,
+        description="Whether Redis caching is enabled",
+    )
+    cache_ttl_embedding: int = Field(
+        default=86400,
+        ge=1,
+        description="TTL in seconds for cached embeddings (default 24h)",
+    )
+    cache_ttl_rewrite: int = Field(
+        default=86400,
+        ge=1,
+        description="TTL in seconds for cached query rewrites (default 24h)",
+    )
+    cache_ttl_retrieve: int = Field(
+        default=3600,
+        ge=1,
+        description="TTL in seconds for cached retrieval results (default 1h)",
+    )
+
+    model_config = SettingsConfigDict(env_prefix="REDIS_", extra="ignore")
 
 
 class ServerSettings(BaseSettings):
@@ -272,8 +363,10 @@ class Settings(BaseSettings):
     reranker: RerankerSettings = RerankerSettings()
     chroma: ChromaSettings = ChromaSettings()
     mysql: MySQLSettings = MySQLSettings()
+    redis: RedisSettings = RedisSettings()
     upload: UploadSettings = UploadSettings()
     agent: AgentSettings = AgentSettings()
+    evaluation: EvaluationSettings = EvaluationSettings()
     server: ServerSettings = ServerSettings()
 
     def model_post_init(self, __context) -> None:

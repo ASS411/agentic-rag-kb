@@ -36,6 +36,10 @@ class ChromaStore:
     core operations needed by the ingestion pipeline and the retrieval layer:
     ``add``, ``query``, and ``delete``.
 
+    The store can also expose additional collections (e.g. ``doc_catalog``)
+    on the same on-disk persistence directory through ``client`` and
+    ``get_collection``.
+
     Usage::
 
         store = ChromaStore()
@@ -89,6 +93,28 @@ class ChromaStore:
         )
 
     # ------------------------------------------------------------------
+    # Multi-collection helpers
+    # ------------------------------------------------------------------
+
+    @property
+    def client(self) -> chromadb.PersistentClient:
+        """Return the underlying PersistentClient so callers can open
+        additional collections on the same on-disk store.
+        """
+        return self._client
+
+    def get_collection(self, name: str):
+        """Open or create an additional collection on the same client.
+
+        Used by ``DocCatalog`` to maintain a side index of document
+        filenames alongside the main knowledge-base collection.
+        """
+        return self._client.get_or_create_collection(
+            name=name,
+            metadata={"hnsw:space": "cosine"},
+        )
+
+    # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
 
@@ -123,17 +149,25 @@ class ChromaStore:
 
         ids: list[str] = [c.id for c in chunks]
         documents: list[str] = [c.content for c in chunks]
-        metadatas: list[Metadata] = [
-            {
+        metadatas: list[Metadata] = []
+        for c in chunks:
+            meta: Metadata = {
                 "doc_id": c.doc_id,
                 "doc_name": c.doc_name,
                 "doc_type": c.doc_type.value,
                 "page": c.page,
                 "chunk_index": c.chunk_index,
                 "char_count": c.char_count,
+                "is_parent": c.metadata.get("is_parent", False),
+                "is_child": c.metadata.get("is_child", False),
             }
-            for c in chunks
-        ]
+            parent_id = c.metadata.get("parent_chunk_id")
+            if parent_id:
+                meta["parent_chunk_id"] = parent_id
+            child_idx = c.metadata.get("child_index")
+            if child_idx is not None:
+                meta["child_index"] = child_idx
+            metadatas.append(meta)
 
         self._collection.add(
             ids=ids,
@@ -267,6 +301,59 @@ class ChromaStore:
         )
 
         return deleted
+
+    def get_by_ids(self, ids: list[str]) -> QueryResult:
+        """Retrieve chunks by their IDs.
+
+        Parameters
+        ----------
+        ids:
+            List of chunk identifiers to retrieve.
+
+        Returns
+        -------
+        chromadb.api.types.QueryResult
+            Dictionary with keys ``ids``, ``embeddings``, ``documents``,
+            ``metadatas``, and ``distances``.
+        """
+        if not ids:
+            return {
+                "ids": [],
+                "embeddings": [],
+                "documents": [],
+                "metadatas": [],
+                "distances": [],
+            }
+
+        return self._collection.get(
+            ids=ids,
+            include=["documents", "metadatas"],
+        )
+
+    def get_all(
+        self, *, where: dict | None = None,
+    ) -> tuple[list[str], list[str], list[dict]]:
+        """Retrieve all chunk ids, documents, and metadatas from the
+        collection, optionally filtered by *where*.
+
+        Parameters
+        ----------
+        where:
+            Optional Chroma where-filter dict (e.g. ``{"is_child": True}``).
+
+        Returns
+        -------
+        tuple[list[str], list[str], list[dict]]
+            (ids, documents, metadatas) — three parallel lists.
+        """
+        result = self._collection.get(
+            where=where,
+            include=["documents", "metadatas"],
+        )
+        ids: list[str] = result.get("ids", []) or []
+        docs: list[str] = result.get("documents", []) or []
+        metas: list[dict] = result.get("metadatas", []) or []
+        return ids, docs, metas
 
     # ------------------------------------------------------------------
     # Introspection

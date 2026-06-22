@@ -1,7 +1,7 @@
 """Integration tests for AgentLoop.run() state machine (task 5.5).
 
 Covers: full pipeline flow, max_rounds limit, early stop on sufficient check,
-SSE event shape, error fallback.
+SSE event shape, error fallback.  Updated for parent-child retrieval (task fix).
 """
 
 from __future__ import annotations
@@ -28,7 +28,8 @@ def _make_patched_agent():
 
 
 def _mock_retriever(monkeypatch, total_recalled=6, dedup_count=4):
-    """Patch Retriever to return a controlled RetrievalResult."""
+    """Patch Retriever to return controlled RetrievalResult via
+    retrieve_with_parent_lookup (the only method the new agent loop calls)."""
     from app.core import retriever as ret_mod
     from app.models.search import SearchChunk
 
@@ -41,61 +42,20 @@ def _mock_retriever(monkeypatch, total_recalled=6, dedup_count=4):
         )
 
     class FakeRetriever:
-        async def retrieve(self, queries, top_k_recall=20, rerank=False):
+        async def retrieve_with_parent_lookup(
+            self, queries, *, top_k_recall=20, top_k_rerank=5, rerank=True,
+            hybrid=False, doc_filter=None,
+        ):
             from app.core.retriever import RetrievalResult
             return RetrievalResult(
                 chunks=[_fake_chunk(f"c{i}") for i in range(dedup_count)],
                 total_recalled=total_recalled,
-                reranked=False,
+                reranked=True,
+                parent_lookup=True,
+                hybrid=hybrid and True,
             )
 
     monkeypatch.setattr(ret_mod, "Retriever", FakeRetriever)
-
-
-def _mock_reranker(monkeypatch, top_k=3):
-    """Patch Reranker to return a subset of chunks."""
-    from app.core import reranker as rnk_mod
-    from app.models.document import DocType
-
-    class FakeReranker:
-        def __init__(self, *args, **kwargs):
-            pass
-
-        def rerank(self, question, chunks, top_k=top_k):
-            # Return the last top_k chunks with fake rerank scores so the
-            # test can detect whether generation uses reranked output.
-            for c in chunks:
-                c.metadata["rerank_score"] = 0.1
-            result = chunks[-top_k:]
-            for idx, c in enumerate(result):
-                c.metadata["rerank_score"] = 0.9 - idx * 0.1
-            return result
-
-        def compute_similarity(self, pairs):
-            return [0.9] * len(pairs)
-
-    monkeypatch.setattr(rnk_mod, "Reranker", FakeReranker)
-
-
-def _mock_counting_reranker(monkeypatch, top_k=3):
-    """Patch Reranker and return a call counter for lifecycle tests."""
-    from app.core import reranker as rnk_mod
-
-    counter = {"instances": 0, "rerank_calls": 0}
-
-    class FakeReranker:
-        def __init__(self, *args, **kwargs):
-            counter["instances"] += 1
-
-        def rerank(self, question, chunks, top_k=top_k):
-            counter["rerank_calls"] += 1
-            result = chunks[-top_k:]
-            for idx, c in enumerate(result):
-                c.metadata["rerank_score"] = 0.9 - idx * 0.1
-            return result
-
-    monkeypatch.setattr(rnk_mod, "Reranker", FakeReranker)
-    return counter
 
 
 class TestAgentLoopRun:
@@ -121,7 +81,6 @@ class TestAgentLoopRun:
         """When quality check returns sufficient=True, the loop exits after
         one round (no replan)."""
         _mock_retriever(monkeypatch)
-        _mock_reranker(monkeypatch)
 
         agent = _make_patched_agent()
         # First LLM call: rewrite
@@ -147,7 +106,6 @@ class TestAgentLoopRun:
     async def test_insufficient_triggers_replan(self, monkeypatch):
         """When check returns insufficient, a replan step is emitted."""
         _mock_retriever(monkeypatch)
-        _mock_reranker(monkeypatch)
 
         agent = _make_patched_agent()
         agent._llm.generate.return_value = '["q1"]'
@@ -171,7 +129,6 @@ class TestAgentLoopRun:
     async def test_request_max_rounds_limits_replan(self, monkeypatch):
         """A per-request max_rounds override should cap the search loop."""
         _mock_retriever(monkeypatch)
-        _mock_reranker(monkeypatch)
 
         agent = _make_patched_agent()
         agent._llm.generate.return_value = '["q1"]'
@@ -200,35 +157,9 @@ class TestAgentLoopRun:
         assert done_evt["total_rounds"] == 1
 
     @pytest.mark.asyncio
-    async def test_reranker_instance_reused_across_agent_rounds(self, monkeypatch):
-        """The expensive reranker wrapper should be created once per run."""
-        _mock_retriever(monkeypatch)
-        counter = _mock_counting_reranker(monkeypatch)
-
-        agent = _make_patched_agent()
-        agent._llm.generate.return_value = '["q1"]'
-
-        async def _fake_check(question, context_pool, **kw):
-            from app.core.agent import CheckResult
-            return CheckResult(
-                sufficient=False,
-                reasoning="missing",
-                gap="缺少信息",
-            )
-
-        agent._quality_check = _fake_check
-
-        events = [evt async for evt in agent.run("test?", max_rounds=2)]
-
-        assert events
-        assert counter["instances"] == 1
-        assert counter["rerank_calls"] == 2
-
-    @pytest.mark.asyncio
     async def test_generates_answer_chunks(self, monkeypatch):
         """The stream should contain answer-chunk events before done."""
         _mock_retriever(monkeypatch)
-        _mock_reranker(monkeypatch)
 
         agent = _make_patched_agent()
         agent._llm.generate.return_value = '["q1"]'
@@ -250,15 +181,42 @@ class TestAgentLoopRun:
         assert "done" in types
 
     @pytest.mark.asyncio
-    async def test_sources_come_from_reranked_top_pool(self, monkeypatch):
-        """Final sources should reflect reranked chunks, not raw recall order."""
+    async def test_sources_come_from_parent_child_retrieval(self, monkeypatch):
+        """Final sources should reflect parent chunks returned by
+        retrieve_with_parent_lookup, sorted by score and capped at
+        top_k_rerank."""
         from app.config import settings
+        from app.core import retriever as ret_mod
+        from app.models.search import SearchChunk
 
         original_top_k = settings.agent.top_k_rerank
         settings.agent.top_k_rerank = 2
         try:
-            _mock_retriever(monkeypatch, dedup_count=4)
-            _mock_reranker(monkeypatch, top_k=2)
+            # Create a custom mock retriever that returns chunks with
+            # known scores so we can verify ordering.
+            class CustomFakeRetriever:
+                async def retrieve_with_parent_lookup(
+                    self, queries, *, top_k_recall=20, top_k_rerank=5,
+                    rerank=True, hybrid=False, doc_filter=None,
+                ):
+                    from app.core.retriever import RetrievalResult
+                    chunks = [
+                        SearchChunk(
+                            chunk_id=f"p{i}", content=f"Content p{i}",
+                            score=0.5 + i * 0.1,
+                            doc_id="d1", doc_name="doc.pdf", doc_type="txt",
+                            page=1, chunk_index=i, metadata={},
+                        )
+                        for i in range(4)
+                    ]
+                    return RetrievalResult(
+                        chunks=chunks,
+                        total_recalled=10,
+                        reranked=True,
+                        parent_lookup=True,
+                    )
+
+            monkeypatch.setattr(ret_mod, "Retriever", CustomFakeRetriever)
 
             agent = _make_patched_agent()
             agent._llm.generate.return_value = '["q1"]'
@@ -272,18 +230,56 @@ class TestAgentLoopRun:
             import json
 
             events = [json.loads(evt) async for evt in agent.run("test?")]
-            sources_evt = next(evt for evt in events if evt["type"] == "sources")
+            sources_evt = next(
+                evt for evt in events if evt["type"] == "sources")
 
             source_chunks = sources_evt["source_chunks"]
-            assert [chunk["chunk_id"] for chunk in source_chunks] == ["c2", "c3"]
+            # With top_k_rerank=2, should keep only top 2 by score:
+            # p3(0.8), p2(0.7)
+            assert len(source_chunks) == 2
+            assert [chunk["chunk_id"] for chunk in source_chunks] == [
+                "p3", "p2"]
             assert source_chunks[0]["score"] > source_chunks[1]["score"]
         finally:
             settings.agent.top_k_rerank = original_top_k
 
     @pytest.mark.asyncio
+    async def test_search_sse_shows_parent_child_info(self, monkeypatch):
+        """Search step SSE events should include parent_lookup flag and
+        parent_chunks count."""
+        _mock_retriever(monkeypatch, total_recalled=6, dedup_count=4)
+
+        agent = _make_patched_agent()
+        agent._llm.generate.return_value = '["q1"]'
+
+        async def _fake_check(question, context_pool, **kw):
+            from app.core.agent import CheckResult
+            return CheckResult(sufficient=True, reasoning="ok")
+
+        agent._quality_check = _fake_check
+
+        import json
+
+        events = [json.loads(evt) async for evt in agent.run("test?")]
+
+        # Find the second search event (the result one, not the start one)
+        search_events = [
+            evt for evt in events
+            if evt.get("type") == "agent-step" and evt.get("step") == "search"
+        ]
+        # At least one search event should have parent_lookup info
+        result_events = [
+            evt for evt in search_events
+            if "parent_lookup" in evt
+        ]
+        assert result_events, "Expected search event with parent_lookup field"
+        result_evt = result_events[0]
+        assert result_evt["parent_lookup"] is True
+        assert result_evt["parent_chunks"] == 4
+
+    @pytest.mark.asyncio
     async def test_done_event_contains_summary_fields(self, monkeypatch):
         _mock_retriever(monkeypatch)
-        _mock_reranker(monkeypatch)
 
         agent = _make_patched_agent()
         agent._llm.generate.return_value = '["q1"]'
@@ -307,7 +303,6 @@ class TestAgentLoopRun:
     async def test_event_json_format(self, monkeypatch):
         """Each yield is valid JSON with expected keys."""
         _mock_retriever(monkeypatch)
-        _mock_reranker(monkeypatch)
 
         agent = _make_patched_agent()
         agent._llm.generate.return_value = '["q1"]'
@@ -346,7 +341,6 @@ class TestAgentLoopRun:
     async def test_all_agent_sse_events_include_iso_timestamp(self, monkeypatch):
         """Every Agent SSE event should carry a parseable timestamp."""
         _mock_retriever(monkeypatch)
-        _mock_reranker(monkeypatch)
 
         agent = _make_patched_agent()
         agent._llm.generate.return_value = '["q1"]'

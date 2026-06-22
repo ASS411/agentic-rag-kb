@@ -39,6 +39,8 @@ class SSEStepEvent(BaseModel):
     query_count: int | None = Field(default=None)
     total_recalled: int | None = Field(default=None)
     deduplicated: int | None = Field(default=None)
+    parent_chunks: int | None = Field(default=None)
+    parent_lookup: bool | None = Field(default=None)
     verdict: str | None = Field(default=None)
     reasoning: str | None = Field(default=None)
     gap: str | None = Field(default=None)

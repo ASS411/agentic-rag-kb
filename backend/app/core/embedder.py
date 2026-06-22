@@ -20,6 +20,8 @@ from tenacity import (
 
 from app.config import settings
 
+from app.core.cache import RedisCacheManager, cache_key_embedding
+
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
@@ -96,11 +98,18 @@ class Embedder:
         batch_size: int | None = None,
         max_retries: int | None = None,
         timeout: float | None = None,
+        cache: RedisCacheManager | None = None,
     ) -> None:
         """Initialise the embedding client.
 
         All parameters default to the corresponding ``settings.embedding.*``
         values when not provided, allowing per-instance overrides in tests.
+
+        Parameters
+        ----------
+        cache:
+            RedisCacheManager for caching embeddings.  Created lazily
+            with defaults when omitted.
         """
         emb = settings.embedding
 
@@ -112,12 +121,21 @@ class Embedder:
         self._max_retries = max_retries if max_retries is not None else emb.max_retries
         self._timeout = timeout if timeout is not None else float(emb.timeout_seconds)
 
+        self._cache = cache  # None = deferred creation
+
         self._client = AsyncOpenAI(
             api_key=self._api_key,
             base_url=self._base_url,
             timeout=self._timeout,
             max_retries=0,  # we handle retries ourselves for fine-grained control
         )
+
+    def _get_cache(self) -> RedisCacheManager | None:
+        """Lazily create the cache instance.  Returns ``None`` when Redis
+        is disabled by config."""
+        if self._cache is None:
+            self._cache = RedisCacheManager()
+        return self._cache if settings.redis.enabled else None
 
     # ------------------------------------------------------------------
     # Public API
@@ -145,7 +163,22 @@ class Embedder:
             If the API call fails after all retries.
         """
         _validate_single(text)
+
+        cache = self._get_cache()
+        if cache is not None:
+            key = cache_key_embedding(text)
+            cached = await cache.get(key)
+            if cached is not None:
+                logger.debug("Embedding cache hit: len(text)={}", len(text))
+                return cached
+            logger.debug("Embedding cache miss: len(text)={}", len(text))
+
         result = await self._call_api(inputs=[text])
+
+        if cache is not None:
+            ttl = settings.redis.cache_ttl_embedding
+            await cache.set(cache_key_embedding(text), result[0], ttl=ttl)
+
         return result[0]
 
     async def embed_batch(self, texts: list[str]) -> list[list[float]]:
@@ -177,10 +210,41 @@ class Embedder:
         """
         _validate_batch(texts)
 
+        cache = self._get_cache()
+
+        # DEV-NOTE: cache individual texts so partial batches benefit
+        if cache is not None:
+            result, missing_indices = await _resolve_batch_via_cache(
+                cache, texts, settings.redis.cache_ttl_embedding,
+            )
+            if missing_indices:
+                logger.debug(
+                    "Embedding batch: {}/{} hit cache, {}/{} need API",
+                    len(texts) - len(missing_indices),
+                    len(texts),
+                    len(missing_indices),
+                    len(texts),
+                )
+                missing_texts = [texts[i] for i in missing_indices]
+                embeddings = await self._batch_api(missing_texts)
+                for idx, vec in zip(missing_indices, embeddings):
+                    result[idx] = vec
+                await _write_batch_to_cache(
+                    cache, missing_texts, embeddings,
+                    ttl=settings.redis.cache_ttl_embedding,
+                )
+            return result
+
+        return await self._batch_api(texts)
+
+    async def _batch_api(self, texts: list[str]) -> list[list[float]]:
+        """Call the embedding API, splitting into sub-batches as needed."""
+        if not texts:
+            return []
+
         if len(texts) <= self._batch_size:
             return await self._call_api(inputs=texts)
 
-        # Split into sub-batches and send sequentially to respect API rate limits
         sub_batches = _chunk_list(texts, self._batch_size)
 
         all_results: list[list[float]] = []
@@ -307,6 +371,52 @@ def _validate_batch(texts: list[str]) -> None:
             raise TypeError("all items must be strings")
         if len(text) > _MAX_CHARS_PER_TEXT:
             raise ValueError("too long")
+
+
+# ---------------------------------------------------------------------------
+# Cache helpers for embed_batch
+# ---------------------------------------------------------------------------
+
+
+async def _resolve_batch_via_cache(
+    cache: RedisCacheManager,
+    texts: list[str],
+    _ttl: int,
+) -> tuple[list[list[float]], list[int]]:
+    """Check cache for each text in *texts*, returning a result list
+    with ``None`` placeholders for misses and the list of missing indices."""
+    import asyncio
+
+    keys = [cache_key_embedding(t) for t in texts]
+    results: list[list[float] | None] = [None] * len(texts)
+    missing: list[int] = []
+
+    cached_vals = await asyncio.gather(*(cache.get(k) for k in keys))
+
+    for i, val in enumerate(cached_vals):
+        if val is not None:
+            results[i] = val
+        else:
+            missing.append(i)
+
+    return results, missing  # type: ignore[return-value]
+
+
+async def _write_batch_to_cache(
+    cache: RedisCacheManager,
+    texts: list[str],
+    embeddings: list[list[float]],
+    *,
+    ttl: int,
+) -> None:
+    """Write each text→embedding pair to cache."""
+    import asyncio
+
+    tasks = [
+        cache.set(cache_key_embedding(text), vec, ttl=ttl)
+        for text, vec in zip(texts, embeddings)
+    ]
+    await asyncio.gather(*tasks)
 
 
 # ---------------------------------------------------------------------------
