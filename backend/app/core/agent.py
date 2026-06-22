@@ -154,45 +154,6 @@ def _parse_check_result(raw: str) -> dict:
         "reasoning": "Failed to parse LLM response",
         "gap": "quality check JSON parsing error",
     }
-
-
-# ---------------------------------------------------------------------------
-# Chunk conversion helpers (for run() loop)
-# ---------------------------------------------------------------------------
-
-
-def _sc_to_chunk_batch(sc_list: list[SearchChunk]):
-    """Convert a list of SearchChunk to the chunker Chunk dataclass."""
-    from app.core.chunker import Chunk
-    from app.models.document import DocType
-
-    result = []
-    for sc in sc_list:
-        dt = DocType(sc.doc_type) if sc.doc_type in ("pdf", "md", "txt") else DocType.TXT
-        result.append(Chunk(
-            id=sc.chunk_id, content=sc.content,
-            doc_id=sc.doc_id, doc_name=sc.doc_name, doc_type=dt,
-            page=sc.page, chunk_index=sc.chunk_index,
-            char_count=len(sc.content),
-            metadata={**sc.metadata, "score": sc.score},
-        ))
-    return result
-
-
-def _chunk_to_sc_batch(chunk_list):
-    """Convert a list of chunker Chunk back to SearchChunk."""
-    result = []
-    for c in chunk_list:
-        score = float(c.metadata.get("rerank_score", c.metadata.get("score", 0.0)))
-        result.append(SearchChunk(
-            chunk_id=c.id, content=c.content, score=score,
-            doc_id=c.doc_id, doc_name=c.doc_name,
-            doc_type=c.doc_type.value if hasattr(c.doc_type, "value") else str(c.doc_type),
-            page=c.page, chunk_index=c.chunk_index, metadata=c.metadata,
-        ))
-    return result
-
-
 # ---------------------------------------------------------------------------
 # AgentStep enum (task 5.1)
 # ---------------------------------------------------------------------------
@@ -443,17 +404,19 @@ class AgentLoop:
     # ------------------------------------------------------------------
 
     async def run(self, question: str, *, max_rounds: int | None = None):
-        """Run the full agent pipeline: rewrite -> search -> rerank -> check
+        """Run the full agent pipeline: rewrite -> search (parent-child) -> check
         -> (replan -> search -> ...) -> generate. Yields SSE event strings.
+
+        Uses parent-child retrieval: searches child chunks for precision,
+        then returns parent chunks for complete semantic context. Reranking
+        is performed internally by ``retrieve_with_parent_lookup``.
         """
         from app.core.retriever import Retriever
-        from app.core.reranker import Reranker
 
         max_rounds = max_rounds or settings.agent.max_rounds
         top_k_recall = settings.agent.top_k_recall
         top_k_rerank = settings.agent.top_k_rerank
         retriever = Retriever()
-        reranker = Reranker()
 
         def _evt(step, message="", **extra):
             return SSEStepEvent(
@@ -516,20 +479,28 @@ class AgentLoop:
 
         for rnd in range(max_rounds):
             rounds_completed = rnd + 1
-            # SEARCH
+            # SEARCH (parent-child: search child chunks, return parent chunks)
             yield _evt(
                 "search",
-                message=f"Searching round {rnd+1}",
+                message=f"Searching round {rnd+1} (parent-child)",
                 round=rnd + 1,
                 query_count=len(queries),
             )
-            rr = await retriever.retrieve(
-                queries, top_k_recall=top_k_recall, rerank=False)
+            rr = await retriever.retrieve_with_parent_lookup(
+                queries,
+                top_k_recall=top_k_recall,
+                top_k_rerank=top_k_rerank,
+                rerank=True,
+            )
             yield _evt(
                 "search",
-                message=f"Retrieved {rr.total_recalled} chunks",
+                message=(
+                    f"Retrieved {rr.total_recalled} child chunks"
+                    f" → {len(rr.chunks)} parent chunks"
+                ),
                 total_recalled=rr.total_recalled,
-                deduplicated=len(rr.chunks),
+                parent_chunks=len(rr.chunks),
+                parent_lookup=rr.parent_lookup,
             )
 
             for c in rr.chunks:
@@ -537,27 +508,18 @@ class AgentLoop:
                    c.score > context_pool[c.chunk_id].score:
                     context_pool[c.chunk_id] = c
 
-            candidates = list(context_pool.values())
-            if not candidates:
+            # Build top_pool from accumulated parent chunks (already
+            # reranked internally by retrieve_with_parent_lookup).
+            top_pool = sorted(
+                context_pool.values(),
+                key=lambda c: c.score,
+                reverse=True,
+            )[:top_k_rerank]
+
+            if not top_pool:
                 yield _evt("check", message="No context found",
                            verdict="insufficient")
                 break
-
-            # RERANK
-            yield _evt(
-                "rerank",
-                message=f"Re-ranking {len(candidates)} candidates",
-                count=len(candidates),
-            )
-            chunk_objs = _sc_to_chunk_batch(candidates)
-            reranked = reranker.rerank(
-                question, chunk_objs, top_k=top_k_rerank)
-            top_pool = _chunk_to_sc_batch(reranked)
-            yield _evt(
-                "rerank",
-                message=f"Top {len(top_pool)} after rerank",
-                count=len(top_pool),
-            )
 
             # CHECK
             yield _evt("check", message="Evaluating quality")
@@ -582,9 +544,9 @@ class AgentLoop:
         # GENERATE
         final_chunks = top_pool or sorted(
             context_pool.values(),
-            key=lambda c: c.metadata.get("rerank_score", c.score),
+            key=lambda c: c.score,
             reverse=True,
-        )
+        )[:top_k_rerank]
         yield _evt(
             "generate",
             message=f"Generating from {len(final_chunks)} chunks",

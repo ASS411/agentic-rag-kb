@@ -223,6 +223,21 @@ class AgentSettings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="AGENT_", extra="ignore")
 
 
+class EvaluationSettings(BaseSettings):
+    """RAGAS evaluation configuration."""
+
+    enabled: bool = Field(default=True)
+    default_metrics: list[str] = Field(
+        default=["faithfulness", "answer_relevancy", "context_precision", "context_recall"],
+    )
+    max_samples_per_eval: int = Field(default=100, ge=1, le=500)
+    use_parent_chunks_for_eval: bool = Field(default=True)
+    store_reports: bool = Field(default=True)
+    report_retention_days: int = Field(default=90)
+
+    model_config = SettingsConfigDict(env_prefix="EVAL_", extra="ignore")
+
+
 class ServerSettings(BaseSettings):
     """HTTP server configuration."""
 
@@ -280,6 +295,7 @@ class Settings(BaseSettings):
     mysql: MySQLSettings = MySQLSettings()
     upload: UploadSettings = UploadSettings()
     agent: AgentSettings = AgentSettings()
+    evaluation: EvaluationSettings = EvaluationSettings()
     server: ServerSettings = ServerSettings()
 
     def model_post_init(self, __context) -> None:

@@ -1,0 +1,38 @@
+Looking in indexes: https://pypi.tuna.tsinghua.edu.cn/simple
+Collecting ragas
+  Downloading https://pypi.tuna.tsinghua.edu.cn/packages/4d/e0/1fecd22c93d3ed66453cbbdefd05528331af4d33b2b76a370d751231912c/ragas-0.4.3-py3-none-any.whl (466 kB)
+Collecting datasets
+  Downloading https://pypi.tuna.tsinghua.edu.cn/packages/05/66/73034ad30b59f13439b75e620989dacba4c047256e358ba7c2e9ec98ea22/datasets-5.0.0-py3-none-any.whl (555 kB)
+     ---------------------------------------- 555.1/555.1 kB 1.3 MB/s eta 0:00:00
+Collecting langchain
+  Downloading https://pypi.tuna.tsinghua.edu.cn/packages/b7/55/3481619d21b9bdfbfda8680fba5cfc6cfe926789b8eaaad95353078cfa20/langchain-1.3.9-py3-none-any.whl (132 kB)
+Requirement already satisfied: numpy<3.0.0,>=1.21.0 in c:\users\gz\appdata\local\programs\python\python312\lib\site-packages (from ragas) (2.4.6)
+Requirement already satisfied: tiktoken in c:\users\gz\appdata\local\programs\python\python312\lib\site-packages (from ragas) (0.13.0)
+Requirement already satisfied: pydantic>=2.0.0 in c:\users\gz\appdata\local\programs\python\python312\lib\site-packages (from ragas) (2.13.4)
+Collecting nest-asyncio (from ragas)
+  Downloading https://pypi.tuna.tsinghua.edu.cn/packages/a0/c4/c2971a3ba4c6103a3d10c4b0f24f461ddc027f0f09763220cf35ca1401b3/nest_asyncio-1.6.0-py3-none-any.whl (5.2 kB)
+Collecting appdirs (from ragas)
+  Downloading https://pypi.tuna.tsinghua.edu.cn/packages/3b/00/2344469e2084fb287c2e0b57b72910309874c3245463acd6cf5e3db69324/appdirs-1.4.4-py2.py3-none-any.whl (9.6 kB)
+Collecting diskcache>=5.6.3 (from ragas)
+  Downloading https://pypi.tuna.tsinghua.edu.cn/packages/3f/27/4570e78fc0bf5ea0ca45eb1de3818a23787af9b390c0b0a0033a1b8236f9/diskcache-5.6.3-py3-none-any.whl (45 kB)
+Requirement already satisfied: typer in c:\users\gz\appdata\local\programs\python\python312\lib\site-packages (from ragas) (0.25.1)
+Requirement already satisfied: rich in c:\users\gz\appdata\local\programs\python\python312\lib\site-packages (from ragas) (15.0.0)
+Requirement already satisfied: openai>=1.0.0 in c:\users\gz\appdata\local\programs\python\python312\lib\site-packages (from ragas) (2.41.0)
+Requirement already satisfied: tqdm in c:\users\gz\appdata\local\programs\python\python312\lib\site-packages (from ragas) (4.68.2)
+Collecting instructor (from ragas)
+  Downloading https://pypi.tuna.tsinghua.edu.cn/packages/54/b3/f999fa377b2e639b0b212216b9f493e72de8ed8ed64b803fb1fe6b776f99/instructor-1.15.3-py3-none-any.whl (252 kB)
+Requirement already satisfied: pillow>=10.4.0 in c:\users\gz\appdata\local\programs\python\python312\lib\site-packages (from ragas) (12.2.0)
+Requirement already satisfied: networkx in c:\users\gz\appdata\local\programs\python\python312\lib\site-packages (from ragas) (3.6.1)
+Collecting scikit-network (from ragas)
+  Downloading https://pypi.tuna.tsinghua.edu.cn/packages/c3/a2/49293b53b837b3248d19fffd41a9fd73dcb2eeabbab890cc4c8aa237b545/scikit_network-0.33.5-cp312-cp312-win_amd64.whl (2.7 MB)
+     ---------------------------------------- 2.7/2.7 MB 952.2 kB/s eta 0:00:00
+Requirement already satisfied: langchain-core in c:\users\gz\appdata\local\programs\python\python312\lib\site-packages (from ragas) (1.4.3)
+Collecting langchain-community (from ragas)
+  Downloading https://pypi.tuna.tsinghua.edu.cn/packages/8f/39/5d97e42a3e95dc2a6d71b2f902a3fae71786131e11d01bddb604accb0ebe/langchain_community-0.4.2-py3-none-any.whl (2.4 MB)
+     ---------------------------------------- 2.4/2.4 MB 1.3 MB/s eta 0:00:00
+Collecting langchain_openai (from ragas)
+  Downloading https://pypi.tuna.tsinghua.edu.cn/packages/03/21/cbf6c3786de881b214c8c6c9f61fe44c9c47608428676a5cd5c5b2b0cda5/langchain_openai-1.3.2-py3-none-any.whl (119 kB)
+Requirement already satisfied: filelock in c:\users\gz\appdata\local\programs\python\python312\lib\site-packages (from datasets) (3.29.1)
+Collecting pyarrow>=21.0.0 (from datasets)
+  Downloading https://pypi.tuna.tsinghua.edu.cn/packages/66/1c/e3e72c8014ad2743ca64a701652c733cc5cbcee15c0463a32a8c55518d9e/pyarrow-24.0.0-cp312-cp312-win_amd64.whl (27.4 MB)
+     ------------------------------           20.7/27.4 MB 1.2 MB/s eta 0:00:06
