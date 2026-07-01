@@ -106,7 +106,7 @@ def _orm_to_response(orm: DocumentModel) -> DocumentResponse:
         doc_id=orm.doc_id,
         file_name=orm.file_name,
         doc_type=DocType(orm.doc_type),
-        size_bytes=orm.size_bytes or 0,
+        size_bytes=orm.size_bytes if orm.size_bytes is not None else 0,
         page_count=orm.page_count or 0,
         chunk_count=orm.chunk_count or 0,
         status=orm.status or "processing",
